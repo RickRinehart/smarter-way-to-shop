@@ -118,7 +118,7 @@ function AuthModal({ onClose, onSuccess, initialMode = 'signup', theme, setTheme
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
-          <span style={{ fontSize: px(28) }}>🛒</span>
+          <img src="/logo-icon.png" alt="" style={{ width: px(40), height: px(40) }} />
           <div>
             <div style={{ fontFamily: FD, fontSize: px(20), color: C.teal, lineHeight: 1, fontWeight: 700 }}>Smarter Way</div>
             <div style={{ fontFamily: FD, fontSize: px(20), color: C.gold, lineHeight: 1, fontWeight: 600 }}>to Shop</div>
