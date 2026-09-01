@@ -104,6 +104,47 @@ function fileToBase64(f) {
   })
 }
 
+// Claude's API caps images at 5MB base64-encoded and 2000px per dimension
+// (platform.claude.com/docs/en/build-with-claude/vision). Phone photos of a
+// flyer routinely exceed both, causing a 413 the browser often misreports as
+// a CORS failure. Downscale + recompress via canvas until it fits, rather
+// than sending the raw file and letting the API reject it.
+function compressImageToLimit(file, maxDim = 2000, maxBase64Bytes = 4.5 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      let { width, height } = img
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height)
+        width = Math.round(width * scale)
+        height = Math.round(height * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+
+      let quality = 0.9
+      const tryEncode = () => {
+        const dataUrl = canvas.toDataURL('image/jpeg', quality)
+        const base64 = dataUrl.split(',')[1]
+        const approxBytes = base64.length * 0.75
+        if (approxBytes <= maxBase64Bytes || quality <= 0.4) {
+          URL.revokeObjectURL(url)
+          resolve(base64)
+        } else {
+          quality -= 0.1
+          tryEncode()
+        }
+      }
+      tryEncode()
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')) }
+    img.src = url
+  })
+}
+
 export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
   const T = THEMES[theme]
   const scale = largeText ? 1.3 : 1
@@ -309,7 +350,21 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     setBulkMessage('')
     try {
       const isPdf = file.type === 'application/pdf'
-      const b64 = await fileToBase64(file)
+      let b64
+      if (isPdf) {
+        // Claude's total request cap is 32MB; base64 inflates raw bytes by
+        // ~4/3, so cap the raw PDF well under that to leave headroom.
+        const maxPdfBytes = 20 * 1024 * 1024
+        if (file.size > maxPdfBytes) {
+          throw new Error(`That PDF is ${(file.size / 1024 / 1024).toFixed(1)}MB, too large for Claude to read directly. Try a photo of the flyer instead, or export/save a smaller PDF (fewer pages or lower resolution).`)
+        }
+        b64 = await fileToBase64(file)
+      } else {
+        // Images: always run through compression, even if already small --
+        // this normalizes format/orientation and guarantees the 5MB/2000px
+        // limits are respected regardless of what the phone/camera produced.
+        b64 = await compressImageToLimit(file)
+      }
       const raw = await callClaude({
         system: `You are reading a grocery store weekly ad flyer (photo or PDF page) to extract every advertised item as structured data.
 For each item, extract:
@@ -323,7 +378,7 @@ Include every item you can identify, even if some fields are uncertain -- use nu
 Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department. No other text.`,
         prompt: "Extract every advertised item from this flyer.",
         imageBase64: isPdf ? null : b64,
-        imageType: file.type || "image/jpeg",
+        imageType: isPdf ? null : "image/jpeg",
         pdfBase64: isPdf ? b64 : null,
         maxTokens: 8000,
       })
