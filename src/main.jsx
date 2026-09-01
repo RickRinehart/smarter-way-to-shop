@@ -37,7 +37,7 @@ function AuthModal({ onClose, onSuccess, initialMode = 'signup' }) {
   const FB = "'DM Sans', sans-serif"
   const FD = "'Cormorant Garamond', serif"
 
-  async function handleSignUp() {
+   async function handleSignUp() {
     if (!email || !password) { setError('Email and password are required.'); return }
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return }
     setLoading(true); setError('')
@@ -46,7 +46,35 @@ function AuthModal({ onClose, onSuccess, initialMode = 'signup' }) {
       options: { data: { full_name: name } },
     })
     if (err) { setLoading(false); setError(err.message); return }
-    if (data.user) {
+
+    // Supabase returns a user object with NO session and no error when the
+    // email is already registered (intentional, to prevent account
+    // enumeration). This is the expected path for most real users here --
+    // someone who already has a Smart Kitchen account almost always types
+    // the same email + password when adding this module, expecting it to
+    // just work. So instead of bouncing them to "please sign in instead",
+    // quietly try signing them in with what they just typed. Only surface
+    // friction if that actually fails (wrong password, etc).
+    if (data.user && !data.session) {
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
+      if (signInErr) {
+        setLoading(false)
+        setMode('signin')
+        setError("An account with this email already exists, but that password didn't match. Please sign in.")
+        return
+      }
+      // Real session established on the existing account -- proceed exactly
+      // like a normal successful signup. Don't touch sws_trial_start_date if
+      // it's already set (setSwsTrialStartDate should no-op / not overwrite
+      // an existing trial start for a returning user); only real new users
+      // (data.session present on the original signUp call, handled below)
+      // get a fresh trial clock started.
+      onSuccess(signInData.user)
+      setLoading(false)
+      return
+    }
+
+    if (data.user && data.session) {
       await setSwsTrialStartDate(data.user.id).catch(() => {})
       onSuccess(data.user)
     } else {
