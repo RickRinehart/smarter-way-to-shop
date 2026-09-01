@@ -347,6 +347,7 @@ function Root() {
         user={user}
         isActive={isActive}
         isSuiteMember={isSuiteMember}
+        isAdmin={isAdmin}
         statusLabel={statusLabel}
         onUpgrade={() => { if (!user) { setAuthMode('signup'); setShowAuth(true) } else setShowSub(true) }}
         onAuthAction={user ? handleSignOut : () => { setAuthMode('signin'); setShowAuth(true) }}
