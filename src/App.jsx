@@ -12,9 +12,16 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase, SWS_KEYS } from './supabaseClient'
 
-const TEAL = '#0F8A7A'
-const GOLD = '#C8963E'
-const C = { bg: '#0a0f14', card: '#0f1720', surface: '#16202b', border: '#233240', text: '#e8edf2', muted: '#8a99a8' }
+const THEMES = {
+  dark: {
+    bg: '#0a0f14', card: '#0f1720', surface: '#16202b', border: '#233240',
+    text: '#e8edf2', muted: '#8a99a8', teal: '#0F8A7A', gold: '#C8963E',
+  },
+  light: {
+    bg: '#f7f5f0', card: '#ffffff', surface: '#f0ede6', border: '#d8d2c4',
+    text: '#1A2344', muted: '#5b6472', teal: '#0b6a5d', gold: '#8a6420',
+  },
+}
 const FB = "'DM Sans', sans-serif"
 const FM = "monospace"
 const FD = "'Cormorant Garamond', serif"
@@ -76,6 +83,20 @@ function fileToBase64(f) {
 }
 
 export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgrade, onAuthAction }) {
+  // Accessibility preferences -- per-device, persisted across visits.
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('sws_theme') || 'dark' } catch { return 'dark' }
+  })
+  const [largeText, setLargeText] = useState(() => {
+    try { return localStorage.getItem('sws_large_text') === 'true' } catch { return false }
+  })
+  useEffect(() => { try { localStorage.setItem('sws_theme', theme) } catch {} }, [theme])
+  useEffect(() => { try { localStorage.setItem('sws_large_text', String(largeText)) } catch {} }, [largeText])
+
+  const T = THEMES[theme]
+  const scale = largeText ? 1.3 : 1
+  const px = n => Math.round(n * scale)
+
   const [view, setView] = useState('list') // 'list' | 'browse' | 'onboarding'
   const [allStores, setAllStores] = useState([])
   const [preferredStoreIds, setPreferredStoreIds] = useState([])
@@ -206,13 +227,28 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
 
   if (!user) {
     return (
-      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🛒</div>
-        <div style={{ fontFamily: FD, fontSize: 30, color: TEAL, marginBottom: 4 }}>Smarter Way to Shop</div>
-        <div style={{ fontFamily: FM, fontSize: 13, color: C.muted, marginBottom: 28, textAlign: 'center', maxWidth: 360 }}>
+      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
+        <div style={{ position: 'fixed', top: 16, right: 16, display: 'flex', gap: 8 }}>
+          <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-pressed={theme === 'light'}
+            style={{ background: 'none', border: '1px solid ' + T.border, borderRadius: 8, color: T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(14), lineHeight: 1 }}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button onClick={() => setLargeText(!largeText)}
+            title={largeText ? 'Switch to normal text size' : 'Switch to large text'}
+            aria-pressed={largeText}
+            style={{ background: 'none', border: '1px solid ' + (largeText ? T.teal : T.border), borderRadius: 8,
+              color: largeText ? T.teal : T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(12), fontWeight: 700 }}>
+            Aa
+          </button>
+        </div>
+        <div style={{ fontSize: px(48), marginBottom: 12 }}>🛒</div>
+        <div style={{ fontFamily: FD, fontSize: px(30), color: T.teal, marginBottom: 4 }}>Smarter Way to Shop</div>
+        <div style={{ fontFamily: FM, fontSize: px(13), color: T.muted, marginBottom: 28, textAlign: 'center', maxWidth: 360 }}>
           Build your shopping list, then see the best price for every item across your preferred stores.
         </div>
-        <button onClick={onAuthAction} style={{ padding: '14px 32px', background: TEAL, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>
+        <button onClick={onAuthAction} style={{ padding: '14px 32px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(15), cursor: 'pointer' }}>
           Get Started — 30 Days Free
         </button>
       </div>
@@ -221,13 +257,13 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
 
   if (!isActive) {
     return (
-      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>🛒</div>
-        <div style={{ fontFamily: FD, fontSize: 24, color: TEAL, marginBottom: 8 }}>Your trial has ended</div>
-        <div style={{ fontFamily: FM, fontSize: 13, color: C.muted, marginBottom: 24, textAlign: 'center', maxWidth: 340 }}>
+      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
+        <div style={{ fontSize: px(40), marginBottom: 12 }}>🛒</div>
+        <div style={{ fontFamily: FD, fontSize: px(24), color: T.teal, marginBottom: 8 }}>Your trial has ended</div>
+        <div style={{ fontFamily: FM, fontSize: px(13), color: T.muted, marginBottom: 24, textAlign: 'center', maxWidth: 340 }}>
           Subscribe to keep comparing prices across your stores and building smarter shopping lists.
         </div>
-        <button onClick={onUpgrade} style={{ padding: '14px 32px', background: TEAL, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>
+        <button onClick={onUpgrade} style={{ padding: '14px 32px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(15), cursor: 'pointer' }}>
           Choose a Plan
         </button>
       </div>
@@ -236,18 +272,18 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
 
   if (view === 'onboarding') {
     return (
-      <div style={{ minHeight: '100vh', background: C.bg, padding: 24, fontFamily: FB }}>
+      <div style={{ minHeight: '100vh', background: T.bg, padding: 24, fontFamily: FB }}>
         <div style={{ maxWidth: 480, margin: '0 auto' }}>
-          <div style={{ fontFamily: FD, fontSize: 24, color: TEAL, marginBottom: 8 }}>Which stores do you shop at?</div>
-          <div style={{ fontFamily: FM, fontSize: 12, color: C.muted, marginBottom: 20 }}>Pick as many as apply — you can change this anytime.</div>
+          <div style={{ fontFamily: FD, fontSize: px(24), color: T.teal, marginBottom: 8 }}>Which stores do you shop at?</div>
+          <div style={{ fontFamily: FM, fontSize: px(12), color: T.muted, marginBottom: 20 }}>Pick as many as apply — you can change this anytime.</div>
           {allStores.map(s => (
-            <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}>
-              <input type="checkbox" checked={preferredStoreIds.includes(s.id)} onChange={() => toggleStore(s.id)} style={{ width: 18, height: 18, accentColor: TEAL }} />
-              <span style={{ color: C.text, fontSize: 14 }}>{s.name}</span>
+            <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: T.card, border: '1px solid ' + T.border, borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={preferredStoreIds.includes(s.id)} onChange={() => toggleStore(s.id)} style={{ width: 18, height: 18, accentColor: T.teal }} />
+              <span style={{ color: T.text, fontSize: px(14) }}>{s.name}</span>
             </label>
           ))}
           <button onClick={() => setView('list')} disabled={preferredStoreIds.length === 0}
-            style={{ width: '100%', marginTop: 16, padding: '12px', background: TEAL, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: preferredStoreIds.length === 0 ? 0.5 : 1 }}>
+            style={{ width: '100%', marginTop: 16, padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: preferredStoreIds.length === 0 ? 0.5 : 1 }}>
             Continue
           </button>
         </div>
@@ -256,24 +292,37 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, fontFamily: FB, color: C.text }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid ' + C.border }}>
+    <div style={{ minHeight: '100vh', background: T.bg, fontFamily: FB, color: T.text }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid ' + T.border }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 20 }}>🛒</span>
-          <span style={{ fontFamily: FD, fontSize: 18, color: TEAL, fontWeight: 700 }}>Smarter Way to Shop</span>
+          <span style={{ fontSize: px(20) }}>🛒</span>
+          <span style={{ fontFamily: FD, fontSize: px(18), color: T.teal, fontWeight: 700 }}>Smarter Way to Shop</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontFamily: FM, fontSize: 11, color: GOLD }}>{statusLabel}</span>
-          <button onClick={() => setView('onboarding')} title="Manage stores" style={{ background: 'none', border: '1px solid ' + C.border, borderRadius: 8, color: C.muted, cursor: 'pointer', padding: '6px 10px', fontSize: 12 }}>Stores</button>
-          <button onClick={onAuthAction} style={{ background: 'none', border: '1px solid ' + C.border, borderRadius: 8, color: C.muted, cursor: 'pointer', padding: '6px 10px', fontSize: 12 }}>Sign Out</button>
+          <span style={{ fontFamily: FM, fontSize: px(11), color: T.gold }}>{statusLabel}</span>
+          <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-pressed={theme === 'light'}
+            style={{ background: 'none', border: '1px solid ' + T.border, borderRadius: 8, color: T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(14), lineHeight: 1 }}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button onClick={() => setLargeText(!largeText)}
+            title={largeText ? 'Switch to normal text size' : 'Switch to large text'}
+            aria-pressed={largeText}
+            style={{ background: 'none', border: '1px solid ' + (largeText ? T.teal : T.border), borderRadius: 8,
+              color: largeText ? T.teal : T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(12), fontWeight: 700 }}>
+            Aa
+          </button>
+          <button onClick={() => setView('onboarding')} title="Manage stores" style={{ background: 'none', border: '1px solid ' + T.border, borderRadius: 8, color: T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(12) }}>Stores</button>
+          <button onClick={onAuthAction} style={{ background: 'none', border: '1px solid ' + T.border, borderRadius: 8, color: T.muted, cursor: 'pointer', padding: '6px 10px', fontSize: px(12) }}>Sign Out</button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', borderBottom: '1px solid ' + C.border }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid ' + T.border }}>
         {[['list', '📝 My List'], ['browse', '🏷 Browse Deals']].map(([k, lb]) => (
           <button key={k} onClick={() => setView(k)}
-            style={{ flex: 1, padding: '12px', background: 'none', border: 'none', borderBottom: view === k ? '2px solid ' + TEAL : '2px solid transparent',
-              color: view === k ? TEAL : C.muted, fontFamily: FB, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+            style={{ flex: 1, padding: '12px', background: 'none', border: 'none', borderBottom: view === k ? '2px solid ' + T.teal : '2px solid transparent',
+              color: view === k ? T.teal : T.muted, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
             {lb}
           </button>
         ))}
@@ -284,44 +333,44 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
           <>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <input value={newItemText} onChange={e => setNewItemText(e.target.value)} onKeyDown={e => e.key === 'Enter' && addItem()}
-                placeholder="Add an item..." style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 14 }} />
-              <button onClick={addItem} style={{ padding: '10px 16px', background: TEAL, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}>+</button>
+                placeholder="Add an item..." style={{ flex: 1, background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }} />
+              <button onClick={addItem} style={{ padding: '10px 16px', background: T.teal, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}>+</button>
             </div>
 
             <label style={{ display: 'block', marginBottom: 16 }}>
               <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
                 onChange={e => e.target.files?.[0] && scanListPhoto(e.target.files[0])} />
-              <div style={{ padding: '10px', textAlign: 'center', border: '1px dashed ' + C.border, borderRadius: 8, color: C.muted, fontSize: 13, cursor: 'pointer' }}>
+              <div style={{ padding: '10px', textAlign: 'center', border: '1px dashed ' + T.border, borderRadius: 8, color: T.muted, fontSize: px(13), cursor: 'pointer' }}>
                 {scanning ? '⏳ Reading your list...' : '📷 Or photograph a handwritten list'}
               </div>
             </label>
 
-            {shoppingList.length === 0 && <div style={{ textAlign: 'center', color: C.muted, fontSize: 13, padding: 20 }}>Your list is empty — add items above.</div>}
+            {shoppingList.length === 0 && <div style={{ textAlign: 'center', color: T.muted, fontSize: px(13), padding: 20 }}>Your list is empty — add items above.</div>}
 
             {shoppingList.map(item => (
-              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: C.card, border: '1px solid ' + C.border, borderRadius: 8, marginBottom: 6 }}>
-                <input type="checkbox" checked={item.checked} onChange={() => toggleChecked(item.id)} style={{ accentColor: TEAL }} />
-                <span style={{ flex: 1, fontSize: 14, textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? C.muted : C.text }}>{item.name}</span>
-                <button onClick={() => removeItem(item.id)} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16 }}>×</button>
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, marginBottom: 6 }}>
+                <input type="checkbox" checked={item.checked} onChange={() => toggleChecked(item.id)} style={{ accentColor: T.teal }} />
+                <span style={{ flex: 1, fontSize: px(14), textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? T.muted : T.text }}>{item.name}</span>
+                <button onClick={() => removeItem(item.id)} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: px(16) }}>×</button>
               </div>
             ))}
 
             {shoppingList.length > 0 && (
               <button onClick={checkBestPrices} disabled={checkingPrices || preferredStoreIds.length === 0}
-                style={{ width: '100%', marginTop: 14, padding: '12px', background: TEAL, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: checkingPrices ? 0.7 : 1 }}>
+                style={{ width: '100%', marginTop: 14, padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: checkingPrices ? 0.7 : 1 }}>
                 {checkingPrices ? '⏳ Checking prices...' : '💰 Check Best Prices'}
               </button>
             )}
 
             {matches && (
               <div style={{ marginTop: 20 }}>
-                <div style={{ fontFamily: FD, fontSize: 16, color: TEAL, marginBottom: 10 }}>Results</div>
+                <div style={{ fontFamily: FD, fontSize: px(16), color: T.teal, marginBottom: 10 }}>Results</div>
                 {matches.map((m, i) => (
-                  <div key={i} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 12, marginBottom: 8 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: m.options.length ? 6 : 0 }}>{m.listItem}</div>
-                    {m.options.length === 0 && <div style={{ fontSize: 12, color: C.muted }}>No current match at your stores.</div>}
+                  <div key={i} style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: 12, marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: px(13), marginBottom: m.options.length ? 6 : 0 }}>{m.listItem}</div>
+                    {m.options.length === 0 && <div style={{ fontSize: px(12), color: T.muted }}>No current match at your stores.</div>}
                     {m.options.map((o, j) => (
-                      <div key={j} style={{ fontSize: 12, color: j === 0 ? '#22c55e' : C.muted, display: 'flex', justifyContent: 'space-between' }}>
+                      <div key={j} style={{ fontSize: px(12), color: j === 0 ? '#22c55e' : T.muted, display: 'flex', justifyContent: 'space-between' }}>
                         <span>{o.storeName}{o.needsUnitCheck ? ' (check unit size)' : ''}</span>
                         <span>${o.price.toFixed(2)}</span>
                       </div>
@@ -335,17 +384,17 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
 
         {view === 'browse' && (
           <>
-            {browsingLoading && <div style={{ textAlign: 'center', color: C.muted, padding: 20 }}>Loading deals...</div>}
-            {!browsingLoading && browseAds.length === 0 && <div style={{ textAlign: 'center', color: C.muted, padding: 20 }}>No active deals found at your stores right now.</div>}
+            {browsingLoading && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>Loading deals...</div>}
+            {!browsingLoading && browseAds.length === 0 && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No active deals found at your stores right now.</div>}
             {browseAds.map((ad, i) => {
               const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
               return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', marginBottom: 6 }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', marginBottom: 6 }}>
                   <div>
-                    <div style={{ fontSize: 13, color: C.text }}>{ad.item_name}</div>
-                    <div style={{ fontSize: 11, color: C.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
+                    <div style={{ fontSize: px(13), color: T.text }}>{ad.item_name}</div>
+                    <div style={{ fontSize: px(11), color: T.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
                   </div>
-                  <button onClick={() => addFromBrowse(ad.item_name)} style={{ background: TEAL, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>+ Add</button>
+                  <button onClick={() => addFromBrowse(ad.item_name)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
                 </div>
               )
             })}
