@@ -69,7 +69,11 @@ async function callClaude({ system, prompt, imageBase64, imageType, pdfBase64, m
     body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, system, messages: [{ role: "user", content }] }),
     signal: AbortSignal.timeout(timeoutMs),
   })
-  if (!res.ok) throw new Error("Claude API error " + res.status)
+  if (!res.ok) {
+    let detail = ''
+    try { const errBody = await res.json(); detail = errBody?.error?.message || JSON.stringify(errBody) } catch { detail = await res.text().catch(() => '') }
+    throw new Error("Claude API error " + res.status + (detail ? ": " + detail : ""))
+  }
   const data = await res.json()
   return (data.content || []).map(b => b.text || "").join("")
 }
