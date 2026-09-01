@@ -27,9 +27,26 @@ const FM = "monospace"
 const FD = "'Cormorant Garamond', serif"
 
 // ── Ported matching logic (kept behaviorally identical to Smart Kitchen's) ──
+// Normalizes common meat/product-form word variants that describe the same
+// underlying cut/form (e.g. "tenderloins" vs "tenders") so the substring
+// matcher below treats them as equivalent. This is deliberately a small,
+// curated list rather than general stemming/fuzzy matching -- broadening it
+// further risks the same false-positive problems fixed earlier (e.g. a
+// "Patties" variant beating a canonical match). Add pairs here only when a
+// real near-miss like this comes up, not preemptively.
+function normalizeForMatch(text) {
+  return text
+    .replace(/tenderloins?\b/g, 'tenders')
+    .replace(/breasts?\b/g, 'breast')
+    .replace(/thighs?\b/g, 'thigh')
+    .replace(/drumsticks?\b/g, 'drumstick')
+    .replace(/patties\b/g, 'patty')
+    .replace(/fillets?\b/g, 'fillet')
+    .replace(/wings?\b/g, 'wing')
+}
 function matchItemToAd(listItemName, adItemName) {
-  const s = (adItemName || "").toLowerCase().trim()
-  const inv = (listItemName || "").toLowerCase().trim()
+  const s = normalizeForMatch((adItemName || "").toLowerCase().trim())
+  const inv = normalizeForMatch((listItemName || "").toLowerCase().trim())
   if (!s || !inv || inv.length < 3) return false
   if (s.includes(" or ")) return false
   return s.includes(inv) || inv.includes(s)
