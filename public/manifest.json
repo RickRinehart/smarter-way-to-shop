@@ -1,0 +1,14 @@
+{
+  "name": "Smarter Way to Shop",
+  "short_name": "SW2Shop",
+  "description": "Compare grocery prices across your preferred stores and build a smarter shopping list.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1A2344",
+  "theme_color": "#1A2344",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
