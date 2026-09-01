@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase, SWS_KEYS } from './supabaseClient'
 
-const THEMES = {
+export const THEMES = {
   dark: {
     bg: '#0a0f14', card: '#0f1720', surface: '#16202b', border: '#233240',
     text: '#e8edf2', muted: '#8a99a8', teal: '#0F8A7A', gold: '#C8963E',
@@ -82,17 +82,7 @@ function fileToBase64(f) {
   })
 }
 
-export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgrade, onAuthAction }) {
-  // Accessibility preferences -- per-device, persisted across visits.
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('sws_theme') || 'dark' } catch { return 'dark' }
-  })
-  const [largeText, setLargeText] = useState(() => {
-    try { return localStorage.getItem('sws_large_text') === 'true' } catch { return false }
-  })
-  useEffect(() => { try { localStorage.setItem('sws_theme', theme) } catch {} }, [theme])
-  useEffect(() => { try { localStorage.setItem('sws_large_text', String(largeText)) } catch {} }, [largeText])
-
+export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
   const T = THEMES[theme]
   const scale = largeText ? 1.3 : 1
   const px = n => Math.round(n * scale)
