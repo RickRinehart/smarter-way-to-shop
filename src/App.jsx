@@ -24,7 +24,7 @@ function matchItemToAd(listItemName, adItemName) {
   const s = (adItemName || "").toLowerCase().trim()
   const inv = (listItemName || "").toLowerCase().trim()
   if (!s || !inv || inv.length < 3) return false
-  if (s.includes(" or ") || (s.match(/,/g) || []).length > 1) return false
+  if (s.includes(" or ")) return false
   return s.includes(inv) || inv.includes(s)
 }
 function parseQuantity(text) {
@@ -33,7 +33,7 @@ function parseQuantity(text) {
   let m
   if ((m = t.match(/^(\d+(?:\.\d+)?)\s*lb/))) return { qty: parseFloat(m[1]), family: "lb" }
   if ((m = t.match(/^(\d+(?:\.\d+)?)\s*oz/))) return { qty: parseFloat(m[1]) / 16, family: "lb" }
-  if (/^lb\.?s?$/.test(t)) return { qty: 1, family: "lb" }
+  if (/^(lb\.?s?|pounds?)$/.test(t)) return { qty: 1, family: "lb" }
   if (/^oz\.?$/.test(t)) return { qty: 1 / 16, family: "lb" }
   if (/^each$|^ea\.?$/.test(t)) return { qty: 1, family: "each" }
   return null
@@ -149,7 +149,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
       const today = new Date().toISOString().slice(0, 10)
       const { data: ads } = await supabase
         .from('partner_ads')
-        .select('item_name, regular_price, card_price, mix_match_price, unit_size, partner_stores(name)')
+        .select('item_name, regular_price, card_price, mix_match_price, unit_size, canonical_key, partner_store_id, partner_stores(name)')
         .in('partner_store_id', preferredStoreIds)
         .or(`sale_start.is.null,sale_start.lte.${today}`)
         .or(`sale_end.is.null,sale_end.gte.${today}`)
@@ -161,10 +161,20 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
           const raw = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
           if (raw == null) continue
           const normalized = normalizeAdPrice(raw, ad.unit_size)
-          found.push({ storeName: ad.partner_stores?.name || "Unknown", adItemName: ad.item_name, price: normalized ?? raw, needsUnitCheck: normalized == null, unitSize: ad.unit_size })
+          found.push({
+            storeId: ad.partner_store_id,
+            storeName: ad.partner_stores?.name || "Unknown",
+            adItemName: ad.item_name,
+            price: normalized ?? raw,
+            needsUnitCheck: normalized == null,
+            unitSize: ad.unit_size,
+            hasCanonicalKey: ad.canonical_key != null,
+          })
         }
-        found.sort((a, b) => a.price - b.price)
-        return { listItem: item.name, options: found }
+        const canonicalStores = new Set(found.filter(o => o.hasCanonicalKey).map(o => o.storeId))
+        const deduped = found.filter(o => o.hasCanonicalKey || !canonicalStores.has(o.storeId))
+        deduped.sort((a, b) => a.price - b.price)
+        return { listItem: item.name, options: deduped }
       })
       setMatches(results)
     } catch (err) {
