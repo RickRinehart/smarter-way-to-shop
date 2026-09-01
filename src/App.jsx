@@ -14,11 +14,11 @@ import { supabase, SWS_KEYS } from './supabaseClient'
 
 export const THEMES = {
   dark: {
-    bg: '#0a0f14', card: '#0f1720', surface: '#16202b', border: '#233240',
-    text: '#e8edf2', muted: '#8a99a8', teal: '#0F8A7A', gold: '#C8963E',
+    bg: '#12182b', card: '#1A2344', surface: '#232d52', border: '#334073',
+    text: '#f0ede4', muted: '#9aa5c7', teal: '#0F8A7A', gold: '#C8963E',
   },
   light: {
-    bg: '#f7f5f0', card: '#ffffff', surface: '#f0ede6', border: '#d8d2c4',
+    bg: '#ffffff', card: '#ffffff', surface: '#F7EFDF', border: '#e2d9c3',
     text: '#1A2344', muted: '#5b6472', teal: '#0b6a5d', gold: '#8a6420',
   },
 }
@@ -234,7 +234,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
             Aa
           </button>
         </div>
-        <div style={{ fontSize: px(48), marginBottom: 12 }}>🛒</div>
+        <img src="/logo-icon.png" alt="Smarter Way to Shop" style={{ width: px(72), height: px(72), marginBottom: 12 }} />
         <div style={{ fontFamily: FD, fontSize: px(30), color: T.teal, marginBottom: 4 }}>Smarter Way to Shop</div>
         <div style={{ fontFamily: FM, fontSize: px(13), color: T.muted, marginBottom: 28, textAlign: 'center', maxWidth: 360 }}>
           Build your shopping list, then see the best price for every item across your preferred stores.
@@ -249,7 +249,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
   if (!isActive) {
     return (
       <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
-        <div style={{ fontSize: px(40), marginBottom: 12 }}>🛒</div>
+        <img src="/logo-icon.png" alt="Smarter Way to Shop" style={{ width: px(60), height: px(60), marginBottom: 12 }} />
         <div style={{ fontFamily: FD, fontSize: px(24), color: T.teal, marginBottom: 8 }}>Your trial has ended</div>
         <div style={{ fontFamily: FM, fontSize: px(13), color: T.muted, marginBottom: 24, textAlign: 'center', maxWidth: 340 }}>
           Subscribe to keep comparing prices across your stores and building smarter shopping lists.
@@ -286,7 +286,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
     <div style={{ minHeight: '100vh', background: T.bg, fontFamily: FB, color: T.text }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid ' + T.border }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: px(20) }}>🛒</span>
+          <img src="/logo-icon.png" alt="" style={{ width: px(28), height: px(28) }} />
           <span style={{ fontFamily: FD, fontSize: px(18), color: T.teal, fontWeight: 700 }}>Smarter Way to Shop</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
