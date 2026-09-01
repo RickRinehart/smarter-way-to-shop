@@ -82,7 +82,7 @@ function fileToBase64(f) {
   })
 }
 
-export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
+export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
   const T = THEMES[theme]
   const scale = largeText ? 1.3 : 1
   const px = n => Math.round(n * scale)
@@ -100,6 +100,17 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
   const [browsingLoading, setBrowsingLoading] = useState(false)
   const [browseSearch, setBrowseSearch] = useState("")
   const [scanning, setScanning] = useState(false)
+
+  // -- Admin: Ad Upload form state ------------------------------------------
+  const emptyAdForm = {
+    partner_store_id: '', item_name: '', canonical_key: '', department: '',
+    regular_price: '', card_price: '', mix_match_price: '', compare_at_price: '',
+    unit_size: '', sale_start: '', sale_end: '', notes: '',
+  }
+  const [adForm, setAdForm] = useState(emptyAdForm)
+  const [adSubmitting, setAdSubmitting] = useState(false)
+  const [adMessage, setAdMessage] = useState('')
+  const [recentAds, setRecentAds] = useState([])
 
   useEffect(() => { localStorage.setItem(SWS_KEYS.shoppingList, JSON.stringify(shoppingList)) }, [shoppingList])
 
@@ -216,6 +227,47 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
     setShoppingList(prev => [...prev, { id: Date.now() + Math.random(), name: itemName, checked: false }])
   }
 
+  // -- Admin: submit a new ad row. RLS enforces admin-only writes server-side
+  // (see is_sws_admin() policy) -- this client-side isAdmin check only
+  // controls whether the tab is shown, it isn't the real security boundary. --
+  async function submitAd() {
+    if (!adForm.partner_store_id || !adForm.item_name.trim()) {
+      setAdMessage('Store and item name are required.')
+      return
+    }
+    setAdSubmitting(true)
+    setAdMessage('')
+    const numOrNull = v => v === '' ? null : parseFloat(v)
+    const payload = {
+      partner_store_id: adForm.partner_store_id,
+      item_name: adForm.item_name.trim(),
+      canonical_key: adForm.canonical_key.trim() || null,
+      department: adForm.department.trim() || null,
+      regular_price: numOrNull(adForm.regular_price),
+      card_price: numOrNull(adForm.card_price),
+      mix_match_price: numOrNull(adForm.mix_match_price),
+      compare_at_price: numOrNull(adForm.compare_at_price),
+      unit_size: adForm.unit_size.trim() || null,
+      sale_start: adForm.sale_start || null,
+      sale_end: adForm.sale_end || null,
+      notes: adForm.notes.trim() || null,
+      source: 'manual',
+      entered_by: user?.email || 'admin',
+    }
+    const { data, error } = await supabase.from('partner_ads').insert(payload).select().single()
+    if (error) {
+      setAdMessage('Error: ' + error.message)
+    } else {
+      const storeName = allStores.find(s => s.id === adForm.partner_store_id)?.name || ''
+      setRecentAds(prev => [{ ...data, storeName }, ...prev].slice(0, 10))
+      setAdMessage('Added: ' + payload.item_name)
+      // Keep the store selected (fast repeat entry for the same flyer) but
+      // clear everything else for the next item.
+      setAdForm({ ...emptyAdForm, partner_store_id: adForm.partner_store_id })
+    }
+    setAdSubmitting(false)
+  }
+
   if (!user) {
     return (
       <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, fontFamily: FB }}>
@@ -310,7 +362,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
       </div>
 
       <div style={{ display: 'flex', borderBottom: '1px solid ' + T.border }}>
-        {[['list', '📝 My List'], ['browse', '🏷 Browse Deals']].map(([k, lb]) => (
+        {[['list', '📝 My List'], ['browse', '🏷 Browse Deals'], ...(isAdmin ? [['adupload', '📤 Ad Upload']] : [])].map(([k, lb]) => (
           <button key={k} onClick={() => setView(k)}
             style={{ flex: 1, padding: '12px', background: 'none', border: 'none', borderBottom: view === k ? '2px solid ' + T.teal : '2px solid transparent',
               color: view === k ? T.teal : T.muted, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
@@ -399,6 +451,102 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
                 )
               })
             })()}
+          </>
+        )}
+
+        {view === 'adupload' && isAdmin && (
+          <>
+            <div style={{ fontFamily: FD, fontSize: px(18), color: T.teal, marginBottom: 4 }}>Add a Deal</div>
+            <div style={{ fontSize: px(11), color: T.muted, marginBottom: 16 }}>Admin only. Writes are also enforced server-side.</div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Store *</label>
+              <select value={adForm.partner_store_id} onChange={e => setAdForm({ ...adForm, partner_store_id: e.target.value })}
+                style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }}>
+                <option value="">Select a store...</option>
+                {allStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Item name *</label>
+              <input value={adForm.item_name} onChange={e => setAdForm({ ...adForm, item_name: e.target.value })}
+                placeholder='e.g. "80% Lean Ground Beef, Family Pack"'
+                style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Canonical key</label>
+                <input value={adForm.canonical_key} onChange={e => setAdForm({ ...adForm, canonical_key: e.target.value })}
+                  placeholder="ground_beef_approx_80lean"
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Department</label>
+                <input value={adForm.department} onChange={e => setAdForm({ ...adForm, department: e.target.value })}
+                  placeholder="Meat, Produce, etc."
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {[['regular_price', 'Regular $'], ['card_price', 'Card/Sale $'], ['mix_match_price', 'Mix & Match $'], ['compare_at_price', 'Compare-At $']].map(([key, label]) => (
+                <div key={key} style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>{label}</label>
+                  <input type="number" step="0.01" value={adForm[key]} onChange={e => setAdForm({ ...adForm, [key]: e.target.value })}
+                    placeholder="0.00"
+                    style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 8px', color: T.text, fontSize: px(13) }} />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Unit size</label>
+                <input value={adForm.unit_size} onChange={e => setAdForm({ ...adForm, unit_size: e.target.value })}
+                  placeholder="lb, 16 oz, each..."
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Sale start</label>
+                <input type="date" value={adForm.sale_start} onChange={e => setAdForm({ ...adForm, sale_start: e.target.value })}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Sale end</label>
+                <input type="date" value={adForm.sale_end} onChange={e => setAdForm({ ...adForm, sale_end: e.target.value })}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Notes</label>
+              <input value={adForm.notes} onChange={e => setAdForm({ ...adForm, notes: e.target.value })}
+                placeholder="Optional -- e.g. lean % not specified, approximate match only"
+                style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+            </div>
+
+            {adMessage && (
+              <div style={{ fontSize: px(12), color: adMessage.startsWith('Error') ? '#dc2626' : T.teal, marginBottom: 12 }}>{adMessage}</div>
+            )}
+
+            <button onClick={submitAd} disabled={adSubmitting}
+              style={{ width: '100%', padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: adSubmitting ? 0.7 : 1, marginBottom: 20 }}>
+              {adSubmitting ? 'Adding...' : '+ Add Deal'}
+            </button>
+
+            {recentAds.length > 0 && (
+              <>
+                <div style={{ fontFamily: FD, fontSize: px(15), color: T.teal, marginBottom: 8 }}>Recently Added This Session</div>
+                {recentAds.map((ad, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '8px 12px', marginBottom: 6 }}>
+                    <span style={{ fontSize: px(12), color: T.text }}>{ad.item_name}</span>
+                    <span style={{ fontSize: px(11), color: T.muted }}>{ad.storeName}</span>
+                  </div>
+                ))}
+              </>
+            )}
           </>
         )}
       </div>
