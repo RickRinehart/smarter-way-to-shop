@@ -122,7 +122,10 @@ function AuthModal({ onClose, onSuccess, initialMode = 'signup' }) {
             </button>
           ))}
         </div>
-
+        <div style={{ fontFamily: 'monospace', fontSize: 11, color: C.muted, textAlign: 'center',
+          lineHeight: 1.5, marginBottom: 20 }}>
+          Already have a Smart Kitchen account? Use the same email and password here.
+        </div>
         {mode === 'signup' && (
           <input style={inp} placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
         )}
