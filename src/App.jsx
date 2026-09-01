@@ -98,6 +98,7 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
   const [checkingPrices, setCheckingPrices] = useState(false)
   const [browseAds, setBrowseAds] = useState([])
   const [browsingLoading, setBrowsingLoading] = useState(false)
+  const [browseSearch, setBrowseSearch] = useState("")
   const [scanning, setScanning] = useState(false)
 
   useEffect(() => { localStorage.setItem(SWS_KEYS.shoppingList, JSON.stringify(shoppingList)) }, [shoppingList])
@@ -374,20 +375,30 @@ export default function App({ user, isActive, isSuiteMember, statusLabel, onUpgr
 
         {view === 'browse' && (
           <>
+            <input value={browseSearch} onChange={e => setBrowseSearch(e.target.value)}
+              placeholder="Search deals..."
+              style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14), marginBottom: 12 }} />
             {browsingLoading && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>Loading deals...</div>}
             {!browsingLoading && browseAds.length === 0 && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No active deals found at your stores right now.</div>}
-            {browseAds.map((ad, i) => {
-              const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', marginBottom: 6 }}>
-                  <div>
-                    <div style={{ fontSize: px(13), color: T.text }}>{ad.item_name}</div>
-                    <div style={{ fontSize: px(11), color: T.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
+            {(() => {
+              const q = browseSearch.trim().toLowerCase()
+              const filtered = q ? browseAds.filter(ad => (ad.item_name || "").toLowerCase().includes(q)) : browseAds
+              if (!browsingLoading && browseAds.length > 0 && filtered.length === 0) {
+                return <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No deals match "{browseSearch}".</div>
+              }
+              return filtered.map((ad, i) => {
+                const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontSize: px(13), color: T.text }}>{ad.item_name}</div>
+                      <div style={{ fontSize: px(11), color: T.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
+                    </div>
+                    <button onClick={() => addFromBrowse(ad.item_name)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
                   </div>
-                  <button onClick={() => addFromBrowse(ad.item_name)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
-                </div>
-              )
-            })}
+                )
+              })
+            })()}
           </>
         )}
       </div>
