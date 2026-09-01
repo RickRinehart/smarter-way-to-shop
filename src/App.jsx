@@ -53,9 +53,10 @@ function normalizeAdPrice(adPrice, adUnitSize) {
 }
 
 // ── Minimal Claude call, this app's own dedicated key (never Smart Kitchen's) ──
-async function callClaude({ system, prompt, imageBase64, imageType, maxTokens = 4000, timeoutMs = 120000 }) {
+async function callClaude({ system, prompt, imageBase64, imageType, pdfBase64, maxTokens = 4000, timeoutMs = 120000 }) {
   const content = []
   if (imageBase64) content.push({ type: "image", source: { type: "base64", media_type: imageType || "image/jpeg", data: imageBase64 } })
+  if (pdfBase64) content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } })
   content.push({ type: "text", text: prompt })
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -111,6 +112,13 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [adSubmitting, setAdSubmitting] = useState(false)
   const [adMessage, setAdMessage] = useState('')
   const [recentAds, setRecentAds] = useState([])
+  const [flyerScanning, setFlyerScanning] = useState(false)
+  const [flyerStoreId, setFlyerStoreId] = useState('')
+  const [flyerSaleStart, setFlyerSaleStart] = useState('')
+  const [flyerSaleEnd, setFlyerSaleEnd] = useState('')
+  const [parsedAds, setParsedAds] = useState(null) // array of editable rows, or null if none pending review
+  const [bulkSubmitting, setBulkSubmitting] = useState(false)
+  const [bulkMessage, setBulkMessage] = useState('')
 
   useEffect(() => { localStorage.setItem(SWS_KEYS.shoppingList, JSON.stringify(shoppingList)) }, [shoppingList])
 
@@ -266,6 +274,96 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       setAdForm({ ...emptyAdForm, partner_store_id: adForm.partner_store_id })
     }
     setAdSubmitting(false)
+  }
+
+  // -- Admin: scan a photographed or PDF flyer, extract items via Claude vision,
+  // and stage them for review before any writes happen. Nothing is inserted
+  // until the admin reviews and clicks "Add All Selected". --
+  async function scanFlyer(file) {
+    if (!flyerStoreId) {
+      setBulkMessage('Pick a store before scanning a flyer.')
+      return
+    }
+    setFlyerScanning(true)
+    setBulkMessage('')
+    try {
+      const isPdf = file.type === 'application/pdf'
+      const b64 = await fileToBase64(file)
+      const raw = await callClaude({
+        system: `You are reading a grocery store weekly ad flyer (photo or PDF page) to extract every advertised item as structured data.
+For each item, extract:
+- item_name: the full product name/description as printed (e.g. "80% Lean Ground Beef, Family Pack")
+- regular_price: the everyday/shelf price if shown, as a plain number, else null
+- card_price: the loyalty-card / member price if shown, as a plain number, else null
+- mix_match_price: if priced as "2/$5" or similar mix-and-match style, the per-unit price (e.g. "2/$5" -> 2.50), else null
+- unit_size: the unit the price applies to, e.g. "lb", "16 oz", "each", "2/$5" style notation if that's how it's shown
+- department: your best guess at department (Meat, Produce, Dairy, Frozen, Grocery, Bakery, Beverages, etc.)
+Include every item you can identify, even if some fields are uncertain -- use null for anything not shown or not determinable.
+Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department. No other text.`,
+        prompt: "Extract every advertised item from this flyer.",
+        imageBase64: isPdf ? null : b64,
+        imageType: file.type || "image/jpeg",
+        pdfBase64: isPdf ? b64 : null,
+        maxTokens: 8000,
+      })
+      const s = raw.indexOf("["), e = raw.lastIndexOf("]")
+      if (s === -1) throw new Error("Could not read the flyer")
+      const items = JSON.parse(raw.slice(s, e + 1))
+      setParsedAds(items.map(it => ({
+        include: true,
+        item_name: it.item_name || '',
+        canonical_key: '',
+        department: it.department || '',
+        regular_price: it.regular_price ?? '',
+        card_price: it.card_price ?? '',
+        mix_match_price: it.mix_match_price ?? '',
+        compare_at_price: '',
+        unit_size: it.unit_size || '',
+        notes: '',
+      })))
+    } catch (err) {
+      setBulkMessage("Couldn't read that flyer: " + err.message + " — you can add items manually instead.")
+    }
+    setFlyerScanning(false)
+  }
+
+  function updateParsedAd(i, field, value) {
+    setParsedAds(prev => prev.map((row, idx) => idx === i ? { ...row, [field]: value } : row))
+  }
+
+  async function submitParsedAds() {
+    const rows = (parsedAds || []).filter(r => r.include && r.item_name.trim())
+    if (rows.length === 0) { setBulkMessage('No items selected.'); return }
+    if (!flyerStoreId) { setBulkMessage('Pick a store first.'); return }
+    setBulkSubmitting(true)
+    setBulkMessage('')
+    const numOrNull = v => v === '' || v == null ? null : parseFloat(v)
+    const payloads = rows.map(r => ({
+      partner_store_id: flyerStoreId,
+      item_name: r.item_name.trim(),
+      canonical_key: r.canonical_key.trim() || null,
+      department: r.department.trim() || null,
+      regular_price: numOrNull(r.regular_price),
+      card_price: numOrNull(r.card_price),
+      mix_match_price: numOrNull(r.mix_match_price),
+      compare_at_price: numOrNull(r.compare_at_price),
+      unit_size: r.unit_size.trim() || null,
+      sale_start: flyerSaleStart || null,
+      sale_end: flyerSaleEnd || null,
+      notes: r.notes.trim() || null,
+      source: 'manual',
+      entered_by: user?.email || 'admin',
+    }))
+    const { data, error } = await supabase.from('partner_ads').insert(payloads).select()
+    if (error) {
+      setBulkMessage('Error: ' + error.message)
+    } else {
+      const storeName = allStores.find(s => s.id === flyerStoreId)?.name || ''
+      setRecentAds(prev => [...(data || []).map(d => ({ ...d, storeName })), ...prev].slice(0, 10))
+      setBulkMessage(`Added ${data.length} item${data.length === 1 ? '' : 's'} from the flyer.`)
+      setParsedAds(null)
+    }
+    setBulkSubmitting(false)
   }
 
   if (!user) {
@@ -456,7 +554,73 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
 
         {view === 'adupload' && isAdmin && (
           <>
-            <div style={{ fontFamily: FD, fontSize: px(18), color: T.teal, marginBottom: 4 }}>Add a Deal</div>
+            <div style={{ fontFamily: FD, fontSize: px(18), color: T.teal, marginBottom: 4 }}>Scan a Flyer</div>
+            <div style={{ fontSize: px(11), color: T.muted, marginBottom: 16 }}>Upload a photo or PDF of a weekly ad. Claude reads it, you review before anything is saved.</div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Store *</label>
+                <select value={flyerStoreId} onChange={e => setFlyerStoreId(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }}>
+                  <option value="">Select a store...</option>
+                  {allStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Sale start</label>
+                <input type="date" value={flyerSaleStart} onChange={e => setFlyerSaleStart(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Sale end</label>
+                <input type="date" value={flyerSaleEnd} onChange={e => setFlyerSaleEnd(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(13) }} />
+              </div>
+            </div>
+
+            <label style={{ display: 'block', marginBottom: 16 }}>
+              <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
+                onChange={e => e.target.files?.[0] && scanFlyer(e.target.files[0])} />
+              <div style={{ padding: '14px', textAlign: 'center', border: '1px dashed ' + T.border, borderRadius: 8, color: T.muted, fontSize: px(13), cursor: 'pointer' }}>
+                {flyerScanning ? '⏳ Reading the flyer...' : '📄 Upload a flyer photo or PDF'}
+              </div>
+            </label>
+
+            {bulkMessage && (
+              <div style={{ fontSize: px(12), color: bulkMessage.startsWith('Error') || bulkMessage.startsWith("Couldn't") ? '#dc2626' : T.teal, marginBottom: 16 }}>{bulkMessage}</div>
+            )}
+
+            {parsedAds && (
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontFamily: FD, fontSize: px(15), color: T.teal, marginBottom: 8 }}>
+                  Review {parsedAds.length} Item{parsedAds.length === 1 ? '' : 's'}
+                </div>
+                {parsedAds.map((row, i) => (
+                  <div key={i} style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: 10, marginBottom: 8, opacity: row.include ? 1 : 0.5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <input type="checkbox" checked={row.include} onChange={e => updateParsedAd(i, 'include', e.target.checked)} style={{ accentColor: T.teal }} />
+                      <input value={row.item_name} onChange={e => updateParsedAd(i, 'item_name', e.target.value)}
+                        style={{ flex: 1, background: T.surface, border: '1px solid ' + T.border, borderRadius: 6, padding: '6px 8px', color: T.text, fontSize: px(13) }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginLeft: 26 }}>
+                      {[['regular_price', 'Reg $'], ['card_price', 'Card $'], ['mix_match_price', 'Mix $'], ['unit_size', 'Unit'], ['department', 'Dept']].map(([key, label]) => (
+                        <input key={key} value={row[key]} onChange={e => updateParsedAd(i, key, e.target.value)}
+                          placeholder={label}
+                          style={{ flex: 1, background: T.surface, border: '1px solid ' + T.border, borderRadius: 6, padding: '6px 8px', color: T.text, fontSize: px(12) }} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <button onClick={submitParsedAds} disabled={bulkSubmitting}
+                  style={{ width: '100%', padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: bulkSubmitting ? 0.7 : 1, marginTop: 8 }}>
+                  {bulkSubmitting ? 'Adding...' : `Add All Selected (${parsedAds.filter(r => r.include).length})`}
+                </button>
+              </div>
+            )}
+
+            <div style={{ height: 1, background: T.border, margin: '8px 0 24px' }} />
+
+            <div style={{ fontFamily: FD, fontSize: px(18), color: T.teal, marginBottom: 4 }}>Add a Deal Manually</div>
             <div style={{ fontSize: px(11), color: T.muted, marginBottom: 16 }}>Admin only. Writes are also enforced server-side.</div>
 
             <div style={{ marginBottom: 12 }}>
