@@ -380,7 +380,8 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         imageBase64: isPdf ? null : b64,
         imageType: isPdf ? null : "image/jpeg",
         pdfBase64: isPdf ? b64 : null,
-        maxTokens: 8000,
+        maxTokens: 16000,
+        timeoutMs: 300000,
       })
       const s = raw.indexOf("["), e = raw.lastIndexOf("]")
       if (s === -1) throw new Error("Could not read the flyer")
@@ -658,7 +659,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
               <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
                 onChange={e => e.target.files?.[0] && scanFlyer(e.target.files[0])} />
               <div style={{ padding: '14px', textAlign: 'center', border: '1px dashed ' + T.border, borderRadius: 8, color: T.muted, fontSize: px(13), cursor: 'pointer' }}>
-                {flyerScanning ? '⏳ Reading the flyer...' : '📄 Upload a flyer photo or PDF'}
+                {flyerScanning ? '⏳ Reading the flyer... (large PDFs can take a few minutes)' : '📄 Upload a flyer photo or PDF'}
               </div>
             </label>
 
