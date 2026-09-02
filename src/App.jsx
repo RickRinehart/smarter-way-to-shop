@@ -468,6 +468,23 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
       setFlyerProgress('Opening the PDF...')
       const { pages, truncatedPageCount } = await splitPdfIntoPageImages(file, setFlyerProgress)
 
+      const sleep = ms => new Promise(r => setTimeout(r, ms))
+      async function callClaudeWithRetry(args, label, retries = 2, delayMs = 1500) {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await callClaude(args)
+          } catch (err) {
+            if (attempt >= retries) throw err
+            // Transient network blips (dropped connection, SSL handshake
+            // hiccup, etc.) are common over a long multi-batch scan -- a
+            // short retry usually succeeds on the next attempt rather than
+            // losing that batch's items entirely.
+            setFlyerProgress(`${label} — connection hiccup, retrying (attempt ${attempt + 2} of ${retries + 1})...`)
+            await sleep(delayMs * (attempt + 1))
+          }
+        }
+      }
+
       const BATCH_SIZE = 3
       const allItems = []
       let anyBatchFailed = false
@@ -475,15 +492,16 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         const batch = pages.slice(i, i + BATCH_SIZE)
         const batchNum = Math.floor(i / BATCH_SIZE) + 1
         const totalBatches = Math.ceil(pages.length / BATCH_SIZE)
-        setFlyerProgress(`Reading pages ${i + 1}-${Math.min(i + BATCH_SIZE, pages.length)} of ${pages.length} (batch ${batchNum} of ${totalBatches})...`)
+        const label = `Reading pages ${i + 1}-${Math.min(i + BATCH_SIZE, pages.length)} of ${pages.length} (batch ${batchNum} of ${totalBatches})`
+        setFlyerProgress(`${label}...`)
         try {
-          const raw = await callClaude({
+          const raw = await callClaudeWithRetry({
             system: FLYER_SYSTEM_PROMPT,
             prompt: "Extract every advertised item from these flyer pages.",
             images: batch,
             maxTokens: 16000,
             timeoutMs: 120000,
-          })
+          }, label)
           allItems.push(...parseFlyerItems(raw))
         } catch (batchErr) {
           anyBatchFailed = true
