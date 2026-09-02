@@ -11,6 +11,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase, SWS_KEYS } from './supabaseClient'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// Worker version must exactly match the imported pdfjs-dist version -- using
+// pdfjsLib.version at runtime avoids hardcoding it in two places and having
+// them drift apart after a future dependency bump.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
 
 export const THEMES = {
   dark: {
@@ -70,9 +76,10 @@ function normalizeAdPrice(adPrice, adUnitSize) {
 }
 
 // ── Minimal Claude call, this app's own dedicated key (never Smart Kitchen's) ──
-async function callClaude({ system, prompt, imageBase64, imageType, pdfBase64, maxTokens = 4000, timeoutMs = 120000 }) {
+async function callClaude({ system, prompt, imageBase64, imageType, images, pdfBase64, maxTokens = 4000, timeoutMs = 120000 }) {
   const content = []
   if (imageBase64) content.push({ type: "image", source: { type: "base64", media_type: imageType || "image/jpeg", data: imageBase64 } })
+  if (images) for (const img of images) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: img } })
   if (pdfBase64) content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } })
   content.push({ type: "text", text: prompt })
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -145,6 +152,39 @@ function compressImageToLimit(file, maxDim = 2000, maxBase64Bytes = 4.5 * 1024 *
   })
 }
 
+// Renders each page of a PDF to a compressed JPEG, client-side, using
+// pdf.js. This lets a large multi-page circular be processed as several
+// smaller Claude requests instead of one huge request that risks hitting
+// size/token/timeout limits. Returns an array of base64 JPEG strings, one
+// per page, each already under the per-image size/dimension limits.
+async function splitPdfIntoPageImages(file, onProgress) {
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const maxPages = 60
+  const pageCount = Math.min(pdf.numPages, maxPages)
+  const pages = []
+  for (let i = 1; i <= pageCount; i++) {
+    onProgress?.(`Rendering page ${i} of ${pageCount}...`)
+    const page = await pdf.getPage(i)
+    const viewport = page.getViewport({ scale: 1 })
+    const scale = Math.min(2000 / Math.max(viewport.width, viewport.height), 2)
+    const scaledViewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    canvas.width = scaledViewport.width
+    canvas.height = scaledViewport.height
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: scaledViewport }).promise
+
+    let quality = 0.85
+    let base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1]
+    while (base64.length * 0.75 > 4.5 * 1024 * 1024 && quality > 0.4) {
+      quality -= 0.1
+      base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1]
+    }
+    pages.push(base64)
+  }
+  return { pages, truncatedPageCount: pdf.numPages > maxPages ? pdf.numPages : null }
+}
+
 export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
   const T = THEMES[theme]
   const scale = largeText ? 1.3 : 1
@@ -175,6 +215,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [adMessage, setAdMessage] = useState('')
   const [recentAds, setRecentAds] = useState([])
   const [flyerScanning, setFlyerScanning] = useState(false)
+  const [flyerProgress, setFlyerProgress] = useState('')
   const [flyerStoreId, setFlyerStoreId] = useState('')
   const [flyerSaleStart, setFlyerSaleStart] = useState('')
   const [flyerSaleEnd, setFlyerSaleEnd] = useState('')
@@ -341,32 +382,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   // -- Admin: scan a photographed or PDF flyer, extract items via Claude vision,
   // and stage them for review before any writes happen. Nothing is inserted
   // until the admin reviews and clicks "Add All Selected". --
-  async function scanFlyer(file) {
-    if (!flyerStoreId) {
-      setBulkMessage('Pick a store before scanning a flyer.')
-      return
-    }
-    setFlyerScanning(true)
-    setBulkMessage('')
-    try {
-      const isPdf = file.type === 'application/pdf'
-      let b64
-      if (isPdf) {
-        // Claude's total request cap is 32MB; base64 inflates raw bytes by
-        // ~4/3, so cap the raw PDF well under that to leave headroom.
-        const maxPdfBytes = 20 * 1024 * 1024
-        if (file.size > maxPdfBytes) {
-          throw new Error(`That PDF is ${(file.size / 1024 / 1024).toFixed(1)}MB, too large for Claude to read directly. Try a photo of the flyer instead, or export/save a smaller PDF (fewer pages or lower resolution).`)
-        }
-        b64 = await fileToBase64(file)
-      } else {
-        // Images: always run through compression, even if already small --
-        // this normalizes format/orientation and guarantees the 5MB/2000px
-        // limits are respected regardless of what the phone/camera produced.
-        b64 = await compressImageToLimit(file)
-      }
-      const raw = await callClaude({
-        system: `You are reading a grocery store weekly ad flyer (photo or PDF page) to extract every advertised item as structured data.
+  const FLYER_SYSTEM_PROMPT = `You are reading a grocery store weekly ad flyer (photo or PDF page) to extract every advertised item as structured data.
 For each item, extract:
 - item_name: the full product name/description as printed (e.g. "80% Lean Ground Beef, Family Pack")
 - regular_price: the everyday/shelf price if shown, as a plain number, else null
@@ -375,51 +391,123 @@ For each item, extract:
 - unit_size: the unit the price applies to, e.g. "lb", "16 oz", "each", "2/$5" style notation if that's how it's shown
 - department: your best guess at department (Meat, Produce, Dairy, Frozen, Grocery, Bakery, Beverages, etc.)
 Include every item you can identify, even if some fields are uncertain -- use null for anything not shown or not determinable.
-Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department. No other text.`,
-        prompt: "Extract every advertised item from this flyer.",
-        imageBase64: isPdf ? null : b64,
-        imageType: isPdf ? null : "image/jpeg",
-        pdfBase64: isPdf ? b64 : null,
-        maxTokens: 32000,
-        timeoutMs: 300000,
-      })
-      const s = raw.indexOf("["), e = raw.lastIndexOf("]")
-      if (s === -1) throw new Error("Could not read the flyer")
-      let items, truncated = false
-      try {
-        items = JSON.parse(raw.slice(s, e + 1))
-      } catch {
-        // Response was likely cut off mid-array (very large flyer). Salvage
-        // whatever complete {...} objects came through before the cutoff
-        // rather than failing the whole scan.
-        const body = raw.slice(s + 1)
-        const objectMatches = body.match(/\{[^{}]*\}/g) || []
-        items = []
-        for (const chunk of objectMatches) {
-          try { items.push(JSON.parse(chunk)) } catch { /* skip incomplete tail object */ }
-        }
+Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department. No other text.`
+
+  function parseFlyerItems(raw) {
+    const s = raw.indexOf("["), e = raw.lastIndexOf("]")
+    if (s === -1) return []
+    try {
+      return JSON.parse(raw.slice(s, e + 1))
+    } catch {
+      // Cut off mid-array -- salvage whatever complete {...} objects came
+      // through rather than losing the whole batch.
+      const body = raw.slice(s + 1)
+      const objectMatches = body.match(/\{[^{}]*\}/g) || []
+      const items = []
+      for (const chunk of objectMatches) {
+        try { items.push(JSON.parse(chunk)) } catch { /* skip incomplete tail object */ }
+      }
+      return items
+    }
+  }
+
+  function toParsedAdRow(it) {
+    return {
+      include: true,
+      item_name: it.item_name || '',
+      canonical_key: '',
+      department: it.department || '',
+      regular_price: it.regular_price ?? '',
+      card_price: it.card_price ?? '',
+      mix_match_price: it.mix_match_price ?? '',
+      compare_at_price: '',
+      unit_size: it.unit_size || '',
+      notes: '',
+    }
+  }
+
+  async function scanFlyer(file) {
+    if (!flyerStoreId) {
+      setBulkMessage('Pick a store before scanning a flyer.')
+      return
+    }
+    setFlyerScanning(true)
+    setBulkMessage('')
+    setFlyerProgress('')
+    try {
+      const isPdf = file.type === 'application/pdf'
+
+      if (!isPdf) {
+        // Single image: unchanged, one request, no page-splitting needed.
+        setFlyerProgress('Reading the flyer...')
+        const b64 = await compressImageToLimit(file)
+        const raw = await callClaude({
+          system: FLYER_SYSTEM_PROMPT,
+          prompt: "Extract every advertised item from this flyer.",
+          imageBase64: b64,
+          imageType: "image/jpeg",
+          maxTokens: 32000,
+          timeoutMs: 180000,
+        })
+        const items = parseFlyerItems(raw)
         if (items.length === 0) throw new Error("Could not read the flyer")
-        truncated = true
+        setParsedAds(items.map(toParsedAdRow))
+        return
       }
-      setParsedAds(items.map(it => ({
-        include: true,
-        item_name: it.item_name || '',
-        canonical_key: '',
-        department: it.department || '',
-        regular_price: it.regular_price ?? '',
-        card_price: it.card_price ?? '',
-        mix_match_price: it.mix_match_price ?? '',
-        compare_at_price: '',
-        unit_size: it.unit_size || '',
-        notes: '',
-      })))
-      if (truncated) {
-        setBulkMessage(`Got ${items.length} items, but the response was cut off — this flyer may have more items than fit in one scan. Review these, submit, then re-scan the remaining pages/sections separately.`)
+
+      // PDF: split into per-page images client-side, then process a few
+      // pages at a time. This keeps each individual request small and fast
+      // (avoiding the size/token/timeout limits a whole 20-40 page circular
+      // hits in one shot) and shows real progress instead of one long
+      // silent wait.
+      const maxPdfBytes = 60 * 1024 * 1024 // raw file, before we split it
+      if (file.size > maxPdfBytes) {
+        throw new Error(`That PDF is ${(file.size / 1024 / 1024).toFixed(1)}MB, too large to process. Try exporting a smaller/lower-resolution PDF.`)
       }
+
+      setFlyerProgress('Opening the PDF...')
+      const { pages, truncatedPageCount } = await splitPdfIntoPageImages(file, setFlyerProgress)
+
+      const BATCH_SIZE = 3
+      const allItems = []
+      let anyBatchFailed = false
+      for (let i = 0; i < pages.length; i += BATCH_SIZE) {
+        const batch = pages.slice(i, i + BATCH_SIZE)
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1
+        const totalBatches = Math.ceil(pages.length / BATCH_SIZE)
+        setFlyerProgress(`Reading pages ${i + 1}-${Math.min(i + BATCH_SIZE, pages.length)} of ${pages.length} (batch ${batchNum} of ${totalBatches})...`)
+        try {
+          const raw = await callClaude({
+            system: FLYER_SYSTEM_PROMPT,
+            prompt: "Extract every advertised item from these flyer pages.",
+            images: batch,
+            maxTokens: 16000,
+            timeoutMs: 120000,
+          })
+          allItems.push(...parseFlyerItems(raw))
+        } catch (batchErr) {
+          anyBatchFailed = true
+          // Keep going -- one failed batch shouldn't lose everything already
+          // read from the other pages.
+        }
+      }
+
+      if (allItems.length === 0) throw new Error("Could not read any pages of this flyer")
+      setParsedAds(allItems.map(toParsedAdRow))
+
+      const notes = []
+      if (anyBatchFailed) notes.push("some pages couldn't be read and were skipped")
+      if (truncatedPageCount) notes.push(`only the first ${pages.length} of ${truncatedPageCount} pages were processed`)
+      setBulkMessage(
+        notes.length > 0
+          ? `Got ${allItems.length} items from ${pages.length} pages, but ${notes.join(' and ')} — review carefully, and re-scan any missed sections separately.`
+          : `Read ${allItems.length} items from ${pages.length} pages.`
+      )
     } catch (err) {
       setBulkMessage("Couldn't read that flyer: " + err.message + " — you can add items manually instead.")
     }
     setFlyerScanning(false)
+    setFlyerProgress('')
   }
 
   function updateParsedAd(i, field, value) {
@@ -677,7 +765,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
               <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
                 onChange={e => e.target.files?.[0] && scanFlyer(e.target.files[0])} />
               <div style={{ padding: '14px', textAlign: 'center', border: '1px dashed ' + T.border, borderRadius: 8, color: T.muted, fontSize: px(13), cursor: 'pointer' }}>
-                {flyerScanning ? '⏳ Reading the flyer... (large PDFs can take a few minutes)' : '📄 Upload a flyer photo or PDF'}
+                {flyerScanning ? `⏳ ${flyerProgress || 'Reading the flyer...'}` : '📄 Upload a flyer photo or PDF'}
               </div>
             </label>
 
