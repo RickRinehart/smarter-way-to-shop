@@ -380,12 +380,27 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         imageBase64: isPdf ? null : b64,
         imageType: isPdf ? null : "image/jpeg",
         pdfBase64: isPdf ? b64 : null,
-        maxTokens: 16000,
+        maxTokens: 32000,
         timeoutMs: 300000,
       })
       const s = raw.indexOf("["), e = raw.lastIndexOf("]")
       if (s === -1) throw new Error("Could not read the flyer")
-      const items = JSON.parse(raw.slice(s, e + 1))
+      let items, truncated = false
+      try {
+        items = JSON.parse(raw.slice(s, e + 1))
+      } catch {
+        // Response was likely cut off mid-array (very large flyer). Salvage
+        // whatever complete {...} objects came through before the cutoff
+        // rather than failing the whole scan.
+        const body = raw.slice(s + 1)
+        const objectMatches = body.match(/\{[^{}]*\}/g) || []
+        items = []
+        for (const chunk of objectMatches) {
+          try { items.push(JSON.parse(chunk)) } catch { /* skip incomplete tail object */ }
+        }
+        if (items.length === 0) throw new Error("Could not read the flyer")
+        truncated = true
+      }
       setParsedAds(items.map(it => ({
         include: true,
         item_name: it.item_name || '',
@@ -398,6 +413,9 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         unit_size: it.unit_size || '',
         notes: '',
       })))
+      if (truncated) {
+        setBulkMessage(`Got ${items.length} items, but the response was cut off — this flyer may have more items than fit in one scan. Review these, submit, then re-scan the remaining pages/sections separately.`)
+      }
     } catch (err) {
       setBulkMessage("Couldn't read that flyer: " + err.message + " — you can add items manually instead.")
     }
