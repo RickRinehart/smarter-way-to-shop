@@ -796,6 +796,26 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                 <div style={{ fontFamily: FD, fontSize: px(15), color: T.teal, marginBottom: 8 }}>
                   Review {parsedAds.length} Item{parsedAds.length === 1 ? '' : 's'}
                 </div>
+                {(() => {
+                  const hasAnyPrice = r => r.regular_price !== '' || r.card_price !== '' || r.mix_match_price !== '' || r.compare_at_price !== ''
+                  const withPriceCount = parsedAds.filter(hasAnyPrice).length
+                  const noPriceCount = parsedAds.length - withPriceCount
+                  return (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                      <button onClick={() => setParsedAds(prev => prev.map(r => ({ ...r, include: hasAnyPrice(r) })))}
+                        style={{ background: T.surface, color: T.text, border: '1px solid ' + T.border, borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>
+                        Select only items with a price ({withPriceCount})
+                      </button>
+                      <button onClick={() => setParsedAds(prev => prev.map(r => ({ ...r, include: true })))}
+                        style={{ background: 'none', color: T.muted, border: '1px solid ' + T.border, borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>
+                        Select all
+                      </button>
+                      {noPriceCount > 0 && (
+                        <span style={{ fontSize: px(11), color: T.muted }}>{noPriceCount} item{noPriceCount === 1 ? '' : 's'} have no price captured</span>
+                      )}
+                    </div>
+                  )
+                })()}
                 {parsedAds.map((row, i) => (
                   <div key={i} style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: 10, marginBottom: 8, opacity: row.include ? 1 : 0.5 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
