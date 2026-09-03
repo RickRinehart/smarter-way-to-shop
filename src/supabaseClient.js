@@ -110,6 +110,11 @@ export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
       category: 'Pantry',
       checked: false,
       source: 'Smarter Way to Shop',
+      // Carries through the store/price the item was added under in SWTS (if any), using
+      // Smart Kitchen's own field names so it shows up already-assigned rather than landing
+      // as an unpriced item the person has to re-tap a match for.
+      assignedStore: item.storeName || null,
+      assignedPrice: item.price ?? null,
     })
   }
 
