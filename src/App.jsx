@@ -336,8 +336,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   }
   useEffect(() => { if (view === 'browse' && preferredStoreIds.length > 0) loadBrowseDeals() }, [view, preferredStoreIds])
 
-  function addFromBrowse(itemName) {
-    setShoppingList(prev => [...prev, { id: Date.now() + Math.random(), name: itemName, checked: false }])
+  function addFromBrowse(itemName, storeName, price) {
+    setShoppingList(prev => [...prev, { id: Date.now() + Math.random(), name: itemName, checked: false, storeName: storeName || null, price: price ?? null }])
   }
 
   async function handleSendToSmartKitchen() {
@@ -708,7 +708,10 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
             {shoppingList.map(item => (
               <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, marginBottom: 6 }}>
                 <input type="checkbox" checked={item.checked} onChange={() => toggleChecked(item.id)} style={{ accentColor: T.teal }} />
-                <span style={{ flex: 1, fontSize: px(14), textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? T.muted : T.text }}>{item.name}</span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: 'block', fontSize: px(14), textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? T.muted : T.text }}>{item.name}</span>
+                  {item.storeName && <span style={{ display: 'block', fontSize: px(11), color: T.teal, marginTop: 2 }}>🛒 {item.storeName}{item.price != null ? ` — $${item.price.toFixed(2)}` : ''}</span>}
+                </span>
                 <button onClick={() => removeItem(item.id)} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: px(16) }}>×</button>
               </div>
             ))}
@@ -775,7 +778,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                       <div style={{ fontSize: px(13), color: T.text }}>{ad.item_name}</div>
                       <div style={{ fontSize: px(11), color: T.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
                     </div>
-                    <button onClick={() => addFromBrowse(ad.item_name)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
+                    <button onClick={() => addFromBrowse(ad.item_name, ad.partner_stores?.name, price)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
                   </div>
                 )
               })
