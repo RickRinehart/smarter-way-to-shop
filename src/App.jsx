@@ -10,7 +10,7 @@
 // unchanged against a plain shopping-list item instead of an inventory item.
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { supabase, SWS_KEYS } from './supabaseClient'
+import { supabase, SWS_KEYS, sendShoppingListToSmartKitchen } from './supabaseClient'
 import * as pdfjsLib from 'pdfjs-dist'
 
 // Worker version must exactly match the imported pdfjs-dist version -- using
@@ -203,6 +203,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [browsingLoading, setBrowsingLoading] = useState(false)
   const [browseSearch, setBrowseSearch] = useState("")
   const [scanning, setScanning] = useState(false)
+  const [sendingToSK, setSendingToSK] = useState(false)
+  const [sendToSKResult, setSendToSKResult] = useState(null)
 
   // -- Admin: Ad Upload form state ------------------------------------------
   const emptyAdForm = {
@@ -336,6 +338,20 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
 
   function addFromBrowse(itemName) {
     setShoppingList(prev => [...prev, { id: Date.now() + Math.random(), name: itemName, checked: false }])
+  }
+
+  async function handleSendToSmartKitchen() {
+    if (!user?.id || sendingToSK) return
+    setSendingToSK(true)
+    setSendToSKResult(null)
+    try {
+      const result = await sendShoppingListToSmartKitchen(user.id, shoppingList)
+      setSendToSKResult({ ok: true, ...result })
+    } catch (e) {
+      setSendToSKResult({ ok: false })
+    }
+    setSendingToSK(false)
+    setTimeout(() => setSendToSKResult(null), 6000)
   }
 
   // -- Admin: submit a new ad row. RLS enforces admin-only writes server-side
@@ -702,6 +718,20 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                 style={{ width: '100%', marginTop: 14, padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: checkingPrices ? 0.7 : 1 }}>
                 {checkingPrices ? '⏳ Checking prices...' : '💰 Check Best Prices'}
               </button>
+            )}
+
+            {shoppingList.length > 0 && user?.id && (
+              <button onClick={handleSendToSmartKitchen} disabled={sendingToSK}
+                style={{ width: '100%', marginTop: 8, padding: '12px', background: 'transparent', color: T.gold, border: '1px solid ' + T.gold, borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: sendingToSK ? 0.7 : 1 }}>
+                {sendingToSK ? '⏳ Sending...' : '📤 Send List to Smart Kitchen'}
+              </button>
+            )}
+            {sendToSKResult && (
+              <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: sendToSKResult.ok ? T.teal + '22' : '#dc262622', border: '1px solid ' + (sendToSKResult.ok ? T.teal : '#dc2626'), color: sendToSKResult.ok ? T.text : '#dc2626', fontSize: px(13), textAlign: 'center' }}>
+                {sendToSKResult.ok
+                  ? `✓ Sent ${sendToSKResult.sent} item${sendToSKResult.sent !== 1 ? 's' : ''} to Smart Kitchen` + (sendToSKResult.skipped > 0 ? ` (${sendToSKResult.skipped} already there)` : '')
+                  : 'Could not send — check your connection and try again'}
+              </div>
             )}
 
             {matches && (
