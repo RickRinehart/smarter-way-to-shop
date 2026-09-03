@@ -55,3 +55,73 @@ const SMART_KITCHEN_PAID_TIERS = ['solo', 'couple', 'family', 'medical']
 export function hasActiveSmartKitchenTier(profile) {
   return !!profile && SMART_KITCHEN_PAID_TIERS.includes(profile.tier) && profile.subscription_status === 'active'
 }
+
+// -- Push this list into Smart Kitchen's shared shopping list -----------------
+// Unlike the read-only helpers above, this IS a deliberate write into Smart
+// Kitchen's own data -- the person explicitly asked for one comprehensive list
+// regardless of which app they build it in. Always merges into whatever's
+// already on the Smart Kitchen list (never overwrites), and dedupes using the
+// same word-boundary + plural-tolerant matcher Smart Kitchen itself uses, so
+// adding "Bacon" here doesn't create a redundant line next to an existing
+// "Wright Brand Bacon" entry. No changes needed on the Smart Kitchen side --
+// its own cloud-sync already treats "another writer grew the array" as a safe,
+// trustworthy update, since that's exactly the array-length-changed case its
+// automatic load path is built to catch.
+function normalizeWordsForDedup(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
+    .map(w => (w.length > 3 && w.endsWith('s')) ? w.slice(0, -1) : w)
+}
+function alreadyOnList(name, existingItems) {
+  const words = normalizeWordsForDedup(name)
+  if (!words.length) return false
+  return existingItems.some(item => {
+    const itemWords = normalizeWordsForDedup(item.name)
+    if (!itemWords.length) return false
+    const shorter = words.length <= itemWords.length ? words : itemWords
+    const longer = words.length <= itemWords.length ? itemWords : words
+    return shorter.every(w => longer.includes(w))
+  })
+}
+export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
+  // Only unchecked items -- a checked item in SWTS means it's already been
+  // decided/acquired, not something still needed on another list.
+  const toSend = (swtsItems || []).filter(i => !i.checked && (i.name || '').trim())
+  if (toSend.length === 0) return { sent: 0, skipped: 0 }
+
+  const { data, error } = await supabase
+    .from('user_data')
+    .select('shopping_list')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw error
+
+  const existing = data?.shopping_list || []
+  const additions = []
+  let skipped = 0
+  for (const item of toSend) {
+    if (alreadyOnList(item.name, existing) || alreadyOnList(item.name, additions)) {
+      skipped++
+      continue
+    }
+    additions.push({
+      name: item.name.trim(),
+      qty: 1,
+      unit: '',
+      category: 'Pantry',
+      checked: false,
+      source: 'Smarter Way to Shop',
+    })
+  }
+
+  if (additions.length > 0) {
+    const { error: writeError } = await supabase
+      .from('user_data')
+      .upsert(
+        { user_id: userId, shopping_list: [...existing, ...additions], updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      )
+    if (writeError) throw writeError
+  }
+
+  return { sent: additions.length, skipped }
+}
