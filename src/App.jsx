@@ -226,6 +226,18 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [bulkMessage, setBulkMessage] = useState('')
 
   useEffect(() => { localStorage.setItem(SWS_KEYS.shoppingList, JSON.stringify(shoppingList)) }, [shoppingList])
+  // Auto-push to Smart Kitchen a few seconds after the list settles, so the person never has
+  // to remember a separate "Send" step -- Smart Kitchen's own Pull button is then the only
+  // action needed anywhere. Debounced so rapid-fire edits (adding several items from Browse
+  // Deals in a row) don't fire a push per keystroke. Safe to fire repeatedly: the underlying
+  // push always merges/dedupes against the cloud list, so re-sending settled items is a no-op.
+  useEffect(() => {
+    if (!user?.id || shoppingList.length === 0) return
+    const t = setTimeout(() => {
+      sendShoppingListToSmartKitchen(user.id, shoppingList).catch(() => {})
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [shoppingList, user?.id])
 
   const loadStores = useCallback(async () => {
     const { data: stores } = await supabase.from('partner_stores').select('id,name').order('name')
