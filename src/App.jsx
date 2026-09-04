@@ -196,12 +196,13 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [mperksEnabled, setMperksEnabled] = useState(() => localStorage.getItem(SWS_KEYS.mperksEnabled) === '1')
   const [mperksInfoOpen, setMperksInfoOpen] = useState(false)
   useEffect(() => { localStorage.setItem(SWS_KEYS.mperksEnabled, mperksEnabled ? '1' : '0') }, [mperksEnabled])
-  // mPerks estimate: 10 points per $1 spent, 1,000 points = 10¢/gal off, applied to a ~12-gallon
-  // fill = $1.20 saved per $100 spent = 1.2%. This is the program's actual math at that tier, not
-  // a guess -- but real value varies with fill size (capped at 20 gal per tier) and whether points
-  // land on a whole-tier boundary, so it's shown as an estimate, not a guarantee.
+  // mPerks estimate: 10 points per $1 spent, and 10,000 points redeems for a flat $10 off
+  // in-store -- $10 on the $1,000 spent to earn those points = 1%. Used as the standard rate
+  // because it's guaranteed and identical for every member, unlike the fuel-tier discounts,
+  // which vary with tank size, fill pattern, and don't apply at all to EV owners. Learn More
+  // explains how someone who does drive a gas vehicle can get more value via fuel redemption.
   const isMeijer = (storeName) => (storeName || '').toLowerCase().includes('meijer')
-  const mperksPrice = (price) => price == null ? null : +(price * (1 - 0.012)).toFixed(2)
+  const mperksPrice = (price) => price == null ? null : +(price * (1 - 0.01)).toFixed(2)
 
   const [shoppingList, setShoppingList] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SWS_KEYS.shoppingList) || "[]") } catch { return [] }
@@ -722,9 +723,9 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
             </div>
             {mperksInfoOpen && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + T.border, fontSize: px(12), color: T.muted, lineHeight: 1.6 }}>
-                Meijer's mPerks program earns 10 points per $1 spent in store or online. At 1,000 points you get 10¢/gal off, up to 10,000 points for $1/gal off — the maximum tier — good for up to 30 gallons per fill-up, worth as much as $30 on a full tank for a larger vehicle like an SUV or pickup. You can also cash 10,000 points for $10 off in-store instead of using them on gas.
+                The <strong>1% estimate</strong> shown here is based on the flat $10-off-in-store reward at 10,000 mPerks points — $10 on the $1,000 spent to earn it. It's used as the standard because it's guaranteed and the same for every member, whether you drive a gas vehicle, an EV, or don't drive at all.
                 <br/><br/>
-                The <strong>~1.2% estimate</strong> shown here assumes a roughly 12-gallon fill-up on the 10¢/gal tier. Your actual value depends on your tank size, how empty it is when you fill, and which tier your points land on — a bigger tank filled from empty captures more value per point than a smaller top-off. Use the shown price as a helpful estimate, not a guarantee.
+                Meijer's mPerks program earns 10 points per $1 spent in store or online. If you do drive a gas vehicle, you can get more value by redeeming points at the pump instead: 1,000 points gets 10¢/gal off, up to 10,000 points for $1/gal off — the maximum tier — good for up to 30 gallons per fill-up, worth as much as $30 on a full tank for a larger vehicle like an SUV or pickup. Which redemption is worth more to you depends on your tank size and how full it is when you fill — a bigger tank filled from empty gets more value per point at the pump than the flat $10 in-store option.
                 <br/><br/>
                 <a href="https://www.meijer.com/shopping/mPerks.html" target="_blank" rel="noopener noreferrer" style={{ color: T.teal, fontWeight: 700 }}>Sign up for mPerks →</a>
               </div>
