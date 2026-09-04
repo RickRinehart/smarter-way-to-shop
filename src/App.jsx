@@ -722,7 +722,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
             </div>
             {mperksInfoOpen && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + T.border, fontSize: px(12), color: T.muted, lineHeight: 1.6 }}>
-                Meijer's mPerks program earns 10 points per $1 spent in store or online. At 1,000 points you get 10¢/gal off (up to 20 gallons); at 10,000 points, $1/gal off (also up to 20 gallons) — or you can cash 10,000 points for $10 off in-store instead of using them on gas.
+                Meijer's mPerks program earns 10 points per $1 spent in store or online. At 1,000 points you get 10¢/gal off, at 10,000 points $1/gal off, and at 20,000 points $2/gal off — each good for up to 30 gallons per fill-up — or you can cash 10,000 points for $10 off in-store instead of using them on gas.
                 <br/><br/>
                 The <strong>~1.2% estimate</strong> shown here assumes a roughly 12-gallon fill-up on the 10¢/gal tier. Your actual value depends on your tank size, how empty it is when you fill, and which tier your points land on — a bigger tank filled from empty captures more value per point than a smaller top-off. Use the shown price as a helpful estimate, not a guarantee.
                 <br/><br/>
