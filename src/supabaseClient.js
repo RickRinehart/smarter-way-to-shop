@@ -16,6 +16,7 @@ export const SWS_KEYS = {
   darkMode:      'sws_darkMode',
   shoppingList:  'sws_shoppingList',   // the user's current list
   preferredKeys: 'sws_preferredCache', // lightweight local cache, not the source of truth
+  mperksEnabled: 'sws_mperksEnabled',  // per-user toggle: show Meijer prices with/without mPerks estimate
 }
 
 // -- User profile -------------------------------------------------------------
