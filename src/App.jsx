@@ -193,6 +193,16 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [view, setView] = useState('list') // 'list' | 'browse' | 'onboarding'
   const [allStores, setAllStores] = useState([])
   const [preferredStoreIds, setPreferredStoreIds] = useState([])
+  const [mperksEnabled, setMperksEnabled] = useState(() => localStorage.getItem(SWS_KEYS.mperksEnabled) === '1')
+  const [mperksInfoOpen, setMperksInfoOpen] = useState(false)
+  useEffect(() => { localStorage.setItem(SWS_KEYS.mperksEnabled, mperksEnabled ? '1' : '0') }, [mperksEnabled])
+  // mPerks estimate: 10 points per $1 spent, 1,000 points = 10¢/gal off, applied to a ~12-gallon
+  // fill = $1.20 saved per $100 spent = 1.2%. This is the program's actual math at that tier, not
+  // a guess -- but real value varies with fill size (capped at 20 gal per tier) and whether points
+  // land on a whole-tier boundary, so it's shown as an estimate, not a guarantee.
+  const isMeijer = (storeName) => (storeName || '').toLowerCase().includes('meijer')
+  const mperksPrice = (price) => price == null ? null : +(price * (1 - 0.012)).toFixed(2)
+
   const [shoppingList, setShoppingList] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SWS_KEYS.shoppingList) || "[]") } catch { return [] }
   })
@@ -699,6 +709,28 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
       </div>
 
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 20 }}>
+        {(view === 'list' || view === 'browse') && (
+          <div style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: px(13), color: T.text }}>
+                <input type="checkbox" checked={mperksEnabled} onChange={e => setMperksEnabled(e.target.checked)} style={{ accentColor: T.teal }} />
+                💳 Show mPerks estimate on Meijer prices
+              </label>
+              <button onClick={() => setMperksInfoOpen(o => !o)} style={{ background: 'none', border: 'none', color: T.teal, fontSize: px(12), cursor: 'pointer', fontWeight: 700 }}>
+                {mperksInfoOpen ? 'Hide' : 'Learn More'}
+              </button>
+            </div>
+            {mperksInfoOpen && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + T.border, fontSize: px(12), color: T.muted, lineHeight: 1.6 }}>
+                Meijer's mPerks program earns 10 points per $1 spent in store or online. At 1,000 points you get 10¢/gal off (up to 20 gallons); at 10,000 points, $1/gal off (also up to 20 gallons) — or you can cash 10,000 points for $10 off in-store instead of using them on gas.
+                <br/><br/>
+                The <strong>~1.2% estimate</strong> shown here assumes a roughly 12-gallon fill-up on the 10¢/gal tier. Your actual value depends on your tank size, how empty it is when you fill, and which tier your points land on — a bigger tank filled from empty captures more value per point than a smaller top-off. Use the shown price as a helpful estimate, not a guarantee.
+                <br/><br/>
+                <a href="https://www.meijer.com/shopping/mPerks.html" target="_blank" rel="noopener noreferrer" style={{ color: T.teal, fontWeight: 700 }}>Sign up for mPerks →</a>
+              </div>
+            )}
+          </div>
+        )}
         {view === 'list' && (
           <>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -722,7 +754,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                 <input type="checkbox" checked={item.checked} onChange={() => toggleChecked(item.id)} style={{ accentColor: T.teal }} />
                 <span style={{ flex: 1 }}>
                   <span style={{ display: 'block', fontSize: px(14), textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? T.muted : T.text }}>{item.name}</span>
-                  {item.storeName && <span style={{ display: 'block', fontSize: px(11), color: T.teal, marginTop: 2 }}>🛒 {item.storeName}{item.price != null ? ` — $${item.price.toFixed(2)}` : ''}</span>}
+                  {item.storeName && <span style={{ display: 'block', fontSize: px(11), color: T.teal, marginTop: 2 }}>🛒 {item.storeName}{item.price != null ? ` — $${item.price.toFixed(2)}` : ''}{mperksEnabled && isMeijer(item.storeName) && item.price != null && <span style={{ color: T.muted }}> · ${mperksPrice(item.price).toFixed(2)} w/ mPerks (est.)</span>}</span>}
                 </span>
                 <button onClick={() => removeItem(item.id)} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: px(16) }}>×</button>
               </div>
@@ -759,7 +791,10 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                     {m.options.map((o, j) => (
                       <div key={j} style={{ fontSize: px(12), color: j === 0 ? '#22c55e' : T.muted, display: 'flex', justifyContent: 'space-between' }}>
                         <span>{o.storeName}{o.needsUnitCheck ? ' (check unit size)' : ''}</span>
-                        <span>${o.price.toFixed(2)}</span>
+                        <span>
+                          ${o.price.toFixed(2)}
+                          {mperksEnabled && isMeijer(o.storeName) && <span style={{ color: T.teal, marginLeft: 6 }}>· ${mperksPrice(o.price).toFixed(2)} w/ mPerks (est.)</span>}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -788,7 +823,10 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                   <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', marginBottom: 6 }}>
                     <div>
                       <div style={{ fontSize: px(13), color: T.text }}>{ad.item_name}</div>
-                      <div style={{ fontSize: px(11), color: T.muted }}>{ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}</div>
+                      <div style={{ fontSize: px(11), color: T.muted }}>
+                        {ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}
+                        {mperksEnabled && isMeijer(ad.partner_stores?.name) && price != null && <span style={{ color: T.teal }}> · ${mperksPrice(price).toFixed(2)} w/ mPerks (est.)</span>}
+                      </div>
                     </div>
                     <button onClick={() => addFromBrowse(ad.item_name, ad.partner_stores?.name, price)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
                   </div>
