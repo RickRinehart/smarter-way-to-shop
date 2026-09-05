@@ -10,7 +10,7 @@
 // unchanged against a plain shopping-list item instead of an inventory item.
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { supabase, SWS_KEYS, sendShoppingListToSmartKitchen, sendSaleItemsToSmartKitchen } from './supabaseClient'
+import { supabase, SWS_KEYS, sendShoppingListToSmartKitchen, sendSaleItemsToSmartKitchen, isFoodRelevantAd } from './supabaseClient'
 import * as pdfjsLib from 'pdfjs-dist'
 
 // Worker version must exactly match the imported pdfjs-dist version -- using
@@ -823,12 +823,12 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
 
         {view === 'browse' && (
           <>
-            {browseAds.length > 0 && user?.id && (
+            {(() => { const foodCount = browseAds.filter(isFoodRelevantAd).length; return foodCount > 0 && user?.id && (
               <button onClick={handleSendSaleItemsToSmartKitchen} disabled={sendingSaleItems}
                 style={{ width: '100%', marginBottom: 10, padding: '12px', background: 'transparent', color: T.gold, border: '1px solid ' + T.gold, borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: sendingSaleItems ? 0.7 : 1 }}>
-                {sendingSaleItems ? '⏳ Sending...' : `📅 Send All ${browseAds.length} Deals to Smart Kitchen for Meal Planning`}
+                {sendingSaleItems ? '⏳ Sending...' : `📅 Send ${foodCount} Food/Wine Deals to Smart Kitchen for Meal Planning`}
               </button>
-            )}
+            )})()}
             {sendSaleItemsResult && (
               <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: sendSaleItemsResult.ok ? T.teal + '22' : '#dc262622', border: '1px solid ' + (sendSaleItemsResult.ok ? T.teal : '#dc2626'), color: sendSaleItemsResult.ok ? T.text : '#dc2626', fontSize: px(13), textAlign: 'center' }}>
                 {sendSaleItemsResult.ok
