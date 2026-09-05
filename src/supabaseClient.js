@@ -131,3 +131,51 @@ export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
 
   return { sent: additions.length, skipped }
 }
+
+// -- Push currently-loaded deals into Smart Kitchen's sale-items data ---------
+// Feeds Smart Kitchen's existing "Build Sale Meal Plan" feature with SWTS's
+// broader, multi-store sale coverage instead of Smart Kitchen's single-ad
+// photo scan. Shaped to match what Smart Kitchen's own Weekly Ad Scanner
+// writes (name/salePrice/store/effectiveWeek) so the same meal-plan prompt
+// can read it without any changes on that side. Each push REPLACES only the
+// SWTS-tagged subset of the existing array (source: 'swts') with a fresh
+// snapshot -- it's "what's on sale right now," not something that should pile
+// up duplicates across repeated sends -- while leaving anything Smart Kitchen
+// scanned itself (which won't carry that tag) untouched.
+export async function sendSaleItemsToSmartKitchen(userId, ads) {
+  const toSend = (ads || []).filter(ad => {
+    const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
+    return (ad.item_name || '').trim() && price != null
+  })
+  if (toSend.length === 0) return { sent: 0 }
+
+  const mapped = toSend.map(ad => {
+    const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
+    return {
+      name: ad.item_name.trim(),
+      salePrice: '$' + Number(price).toFixed(2),
+      store: ad.partner_stores?.name || null,
+      effectiveWeek: 'current',
+      source: 'swts',
+    }
+  })
+
+  const { data, error } = await supabase
+    .from('user_data')
+    .select('swts_sale_items')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw error
+
+  const existing = (data?.swts_sale_items || []).filter(i => i.source !== 'swts')
+
+  const { error: writeError } = await supabase
+    .from('user_data')
+    .upsert(
+      { user_id: userId, swts_sale_items: [...existing, ...mapped], updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    )
+  if (writeError) throw writeError
+
+  return { sent: mapped.length }
+}
