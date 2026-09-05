@@ -132,6 +132,21 @@ export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
   return { sent: additions.length, skipped }
 }
 
+// -- Food relevance filter -----------------------------------------------------
+// Meal planning has no use for household, health & beauty, baby, or pet deals --
+// only actual food and wine/spirits belong in a dinner-planning prompt. Allowlist
+// by department first (more reliable than guessing from the name), falling back
+// to a light keyword exclusion only when an ad has no department on file at all.
+const FOOD_DEPARTMENTS = ['grocery', 'meat', 'frozen', 'dairy', 'produce', 'bakery', 'deli', 'seafood', 'tavern', 'beverages/alcohol']
+const NONFOOD_KEYWORDS = /detergent|shampoo|conditioner|toothpaste|diaper|lotion|\bsoap\b|deodorant|vitamin|supplement|\brazor|tissue|paper towel|toilet paper|\bcleaner\b|wipes|sunscreen|cosmetic|makeup|nail polish|dog food|cat food|\blitter\b/i
+export function isFoodRelevantAd(ad) {
+  const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
+  if (!(ad.item_name || '').trim() || price == null) return false
+  const dept = (ad.department || '').toLowerCase().trim()
+  if (dept) return FOOD_DEPARTMENTS.includes(dept)
+  return !NONFOOD_KEYWORDS.test(ad.item_name) // no department on file -- fall back to keyword check rather than excluding outright
+}
+
 // -- Push currently-loaded deals into Smart Kitchen's sale-items data ---------
 // Feeds Smart Kitchen's existing "Build Sale Meal Plan" feature with SWTS's
 // broader, multi-store sale coverage instead of Smart Kitchen's single-ad
@@ -143,10 +158,7 @@ export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
 // up duplicates across repeated sends -- while leaving anything Smart Kitchen
 // scanned itself (which won't carry that tag) untouched.
 export async function sendSaleItemsToSmartKitchen(userId, ads) {
-  const toSend = (ads || []).filter(ad => {
-    const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
-    return (ad.item_name || '').trim() && price != null
-  })
+  const toSend = (ads || []).filter(isFoodRelevantAd)
   if (toSend.length === 0) return { sent: 0 }
 
   const mapped = toSend.map(ad => {
