@@ -143,7 +143,10 @@ export function isFoodRelevantAd(ad) {
   const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
   if (!(ad.item_name || '').trim() || price == null) return false
   const dept = (ad.department || '').toLowerCase().trim()
-  if (dept) return FOOD_DEPARTMENTS.includes(dept)
+  // Substring match, not exact match -- real department names combine categories
+  // (e.g. D&W's "Beer & Wine" or "Deli & Bakery") and would never exact-match a
+  // single-word allowlist entry even though they're clearly food/alcohol relevant.
+  if (dept) return FOOD_DEPARTMENTS.some(kw => dept.includes(kw))
   return !NONFOOD_KEYWORDS.test(ad.item_name) // no department on file -- fall back to keyword check rather than excluding outright
 }
 
