@@ -137,7 +137,7 @@ export async function sendShoppingListToSmartKitchen(userId, swtsItems) {
 // only actual food and wine/spirits belong in a dinner-planning prompt. Allowlist
 // by department first (more reliable than guessing from the name), falling back
 // to a light keyword exclusion only when an ad has no department on file at all.
-const FOOD_DEPARTMENTS = ['grocery', 'meat', 'frozen', 'dairy', 'produce', 'bakery', 'deli', 'seafood', 'tavern', 'beverages/alcohol']
+const FOOD_DEPARTMENTS = ['grocery', 'meat', 'frozen', 'dairy', 'produce', 'bakery', 'deli', 'seafood', 'tavern', 'beverages/alcohol', 'beer', 'wine', 'spirits', 'liquor']
 const NONFOOD_KEYWORDS = /detergent|shampoo|conditioner|toothpaste|diaper|lotion|\bsoap\b|deodorant|vitamin|supplement|\brazor|tissue|paper towel|toilet paper|\bcleaner\b|wipes|sunscreen|cosmetic|makeup|nail polish|dog food|cat food|\blitter\b/i
 export function isFoodRelevantAd(ad) {
   const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
