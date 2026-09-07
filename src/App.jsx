@@ -192,6 +192,57 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
 
   const [view, setView] = useState('list') // 'list' | 'browse' | 'onboarding'
   const [allStores, setAllStores] = useState([])
+  const [userLat, setUserLat] = useState(() => { const v = localStorage.getItem('sws_userLat'); return v ? parseFloat(v) : null })
+  const [userLng, setUserLng] = useState(() => { const v = localStorage.getItem('sws_userLng'); return v ? parseFloat(v) : null })
+  const [radiusMiles, setRadiusMiles] = useState(() => { const v = localStorage.getItem('sws_radiusMiles'); return v ? parseFloat(v) : 25 })
+  const [addressInput, setAddressInput] = useState('')
+  const [geocoding, setGeocoding] = useState(false)
+  const [locatingGps, setLocatingGps] = useState(false)
+  const [locationError, setLocationError] = useState('')
+  useEffect(() => { if (userLat != null) localStorage.setItem('sws_userLat', userLat); else localStorage.removeItem('sws_userLat') }, [userLat])
+  useEffect(() => { if (userLng != null) localStorage.setItem('sws_userLng', userLng); else localStorage.removeItem('sws_userLng') }, [userLng])
+  useEffect(() => { localStorage.setItem('sws_radiusMiles', radiusMiles) }, [radiusMiles])
+
+  // Haversine distance in miles -- used to filter/sort stores by proximity once a location is set.
+  function milesBetween(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180
+    const R = 3958.8 // Earth radius in miles
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1)
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  }
+
+  function useGpsLocation() {
+    if (!navigator.geolocation) { setLocationError('Your browser doesn\'t support location access.'); return }
+    setLocatingGps(true)
+    setLocationError('')
+    navigator.geolocation.getCurrentPosition(
+      pos => { setUserLat(pos.coords.latitude); setUserLng(pos.coords.longitude); setLocatingGps(false) },
+      err => { setLocationError('Could not get your location -- check that location access is allowed for this site.'); setLocatingGps(false) },
+      { timeout: 10000 }
+    )
+  }
+
+  // Free, no-API-key geocoding via the US Census Bureau -- fine for US addresses, which covers
+  // every store in this app. Not appropriate for a high-volume production geocoder, but plenty
+  // for an individual person typing in their own address a handful of times.
+  async function geocodeAddressInput() {
+    if (!addressInput.trim()) return
+    setGeocoding(true)
+    setLocationError('')
+    try {
+      const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(addressInput.trim())}&benchmark=Public_AR_Current&format=json`
+      const res = await fetch(url)
+      const data = await res.json()
+      const match = data?.result?.addressMatches?.[0]
+      if (!match) { setLocationError('Could not find that address -- try including city and state.'); setGeocoding(false); return }
+      setUserLat(match.coordinates.y)
+      setUserLng(match.coordinates.x)
+    } catch (e) {
+      setLocationError('Could not look up that address right now.')
+    }
+    setGeocoding(false)
+  }
   const [showAddStore, setShowAddStore] = useState(false)
   const [newStoreForm, setNewStoreForm] = useState({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
   const [addingStore, setAddingStore] = useState(false)
@@ -256,7 +307,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   }, [shoppingList, user?.id])
 
   const loadStores = useCallback(async () => {
-    const { data: stores } = await supabase.from('partner_stores').select('id,name').order('name')
+    const { data: stores } = await supabase.from('partner_stores').select('id,name,latitude,longitude').order('name')
     if (stores) setAllStores(stores)
     if (user?.id) {
       const { data: prefs } = await supabase.from('user_preferred_markets').select('partner_store_id').eq('user_id', user.id)
@@ -282,12 +333,26 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     if (!newStoreForm.name.trim() || addingStore) return
     setAddingStore(true)
     try {
+      // Auto-geocode the address so this store is immediately usable with the distance filter --
+      // otherwise it would silently have no coordinates until someone remembered to add them.
+      let lat = null, lng = null
+      if (newStoreForm.address.trim()) {
+        try {
+          const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(newStoreForm.address.trim())}&benchmark=Public_AR_Current&format=json`
+          const res = await fetch(url)
+          const geoData = await res.json()
+          const match = geoData?.result?.addressMatches?.[0]
+          if (match) { lat = match.coordinates.y; lng = match.coordinates.x }
+        } catch (e) { /* geocoding failure shouldn't block adding the store -- just leave coords null */ }
+      }
       const { data, error } = await supabase.from('partner_stores').insert({
         name: newStoreForm.name.trim(),
         chain: newStoreForm.chain.trim() || null,
         address: newStoreForm.address.trim() || null,
         inventory_model: newStoreForm.inventory_model,
         notes: newStoreForm.notes.trim() || null,
+        latitude: lat,
+        longitude: lng,
       }).select('id,name').single()
       if (error) throw error
       await loadStores()
@@ -296,6 +361,9 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       if (data?.id && user?.id) {
         await supabase.from('user_preferred_markets').insert({ user_id: user.id, partner_store_id: data.id })
         setPreferredStoreIds(prev => [...prev, data.id])
+      }
+      if (newStoreForm.address.trim() && lat == null) {
+        alert(`${data.name} was added, but the address couldn't be geocoded -- distance filtering won't work for it until coordinates are added.`)
       }
       setNewStoreForm({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
       setShowAddStore(false)
@@ -702,15 +770,66 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
   }
 
   if (view === 'onboarding') {
+    const hasLocation = userLat != null && userLng != null
+    const storesWithDistance = allStores.map(s => ({
+      ...s,
+      distance: (hasLocation && s.latitude != null && s.longitude != null) ? milesBetween(userLat, userLng, s.latitude, s.longitude) : null,
+    }))
+    const visibleStores = hasLocation
+      ? storesWithDistance.filter(s => s.distance == null || s.distance <= radiusMiles).sort((a, b) => (a.distance ?? -1) - (b.distance ?? -1))
+      : storesWithDistance
+    const hiddenCount = storesWithDistance.length - visibleStores.length
     return (
       <div style={{ minHeight: '100vh', background: T.bg, padding: 24, fontFamily: FB }}>
         <div style={{ maxWidth: 480, margin: '0 auto' }}>
           <div style={{ fontFamily: FD, fontSize: px(24), color: T.teal, marginBottom: 8 }}>Which stores do you shop at?</div>
-          <div style={{ fontFamily: FM, fontSize: px(12), color: T.muted, marginBottom: 20 }}>Pick as many as apply — you can change this anytime.</div>
-          {allStores.map(s => (
+          <div style={{ fontFamily: FM, fontSize: px(12), color: T.muted, marginBottom: 16 }}>Pick as many as apply — you can change this anytime.</div>
+
+          <div style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+            <div style={{ fontFamily: FM, fontSize: px(12), color: T.gold, fontWeight: 700, marginBottom: 8 }}>📍 Narrow by distance{hasLocation ? ` (within ${radiusMiles} mi)` : ''}</div>
+            {!hasLocation ? (
+              <>
+                <button onClick={useGpsLocation} disabled={locatingGps}
+                  style={{ width: '100%', padding: '10px', marginBottom: 8, background: T.teal, border: 'none', borderRadius: 8, color: '#fff', fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer', opacity: locatingGps ? 0.6 : 1 }}>
+                  {locatingGps ? 'Getting your location...' : '📍 Use My Location'}
+                </button>
+                <div style={{ fontFamily: FM, fontSize: px(11), color: T.muted, textAlign: 'center', margin: '6px 0' }}>or</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input value={addressInput} onChange={e => setAddressInput(e.target.value)} placeholder="Enter your address or ZIP"
+                    style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <button onClick={geocodeAddressInput} disabled={geocoding || !addressInput.trim()}
+                    style={{ padding: '10px 16px', background: T.teal, border: 'none', borderRadius: 8, color: '#fff', fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer', opacity: (geocoding || !addressInput.trim()) ? 0.5 : 1 }}>
+                    {geocoding ? '...' : 'Find'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                  {[10, 25, 50, 100].map(mi => (
+                    <button key={mi} onClick={() => setRadiusMiles(mi)}
+                      style={{ padding: '6px 14px', borderRadius: 16, border: '1px solid ' + (radiusMiles === mi ? T.teal : T.border), background: radiusMiles === mi ? T.teal + '22' : 'transparent', color: radiusMiles === mi ? T.teal : T.muted, fontFamily: FM, fontSize: px(12), fontWeight: 600, cursor: 'pointer' }}>
+                      {mi} mi
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => { setUserLat(null); setUserLng(null); setAddressInput('') }}
+                  style={{ background: 'none', border: 'none', color: T.muted, fontFamily: FM, fontSize: px(11), cursor: 'pointer', textDecoration: 'underline' }}>
+                  Clear location / show all stores
+                </button>
+                {hiddenCount > 0 && (
+                  <div style={{ fontFamily: FM, fontSize: px(11), color: T.muted, marginTop: 6 }}>{hiddenCount} store{hiddenCount !== 1 ? 's' : ''} outside {radiusMiles} mi hidden.</div>
+                )}
+              </>
+            )}
+            {locationError && <div style={{ fontFamily: FM, fontSize: px(11), color: '#dc2626', marginTop: 8 }}>{locationError}</div>}
+          </div>
+
+          {visibleStores.map(s => (
             <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: T.card, border: '1px solid ' + T.border, borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={preferredStoreIds.includes(s.id)} onChange={() => toggleStore(s.id)} style={{ width: 18, height: 18, accentColor: T.teal }} />
-              <span style={{ color: T.text, fontSize: px(14) }}>{s.name}</span>
+              <span style={{ color: T.text, fontSize: px(14), flex: 1 }}>{s.name}</span>
+              {s.distance != null && <span style={{ color: T.teal, fontSize: px(12), fontFamily: FM }}>{s.distance.toFixed(1)} mi</span>}
             </label>
           ))}
           {isAdmin && (
