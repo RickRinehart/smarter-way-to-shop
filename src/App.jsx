@@ -475,8 +475,12 @@ For each item, extract:
 - mix_match_price: if priced as "2/$5" or similar mix-and-match style, the per-unit price (e.g. "2/$5" -> 2.50), else null
 - unit_size: the unit the price applies to, e.g. "lb", "16 oz", "each", "2/$5" style notation if that's how it's shown
 - department: your best guess at department (Meat, Produce, Dairy, Frozen, Grocery, Bakery, Beverages, etc.)
+- notes: for "Buy One Get One Free," "Buy 2 Get 1 Free," or "X% OFF" style deals that don't state a per-unit sale price -- describe the deal in a short phrase (e.g. "Buy 1 Get 1 Free", "50% OFF, limit 2 w/coupon"), else null
+CRITICAL: never skip an item just because it's a BOGO or percent-off deal instead of a stated price. Every advertised item on the page must appear in the output, even ones with no clean per-unit price:
+- If the deal states a savings amount (e.g. "Buy 1 Get 1 Free *SAVE $3.49"), set regular_price to that savings amount and put "Buy 1 Get 1 Free" (or the exact deal type) in notes.
+- If no price or savings amount is shown at all, leave regular_price/card_price/mix_match_price null but still include the item with a notes field describing the deal as printed.
 Include every item you can identify, even if some fields are uncertain -- use null for anything not shown or not determinable.
-Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department. No other text.`
+Return ONLY a valid JSON array of objects with exactly these keys: item_name, regular_price, card_price, mix_match_price, unit_size, department, notes. No other text.`
 
   function parseFlyerItems(raw) {
     const s = raw.indexOf("["), e = raw.lastIndexOf("]")
@@ -507,7 +511,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
       mix_match_price: it.mix_match_price ?? '',
       compare_at_price: '',
       unit_size: it.unit_size || '',
-      notes: '',
+      notes: it.notes || '',
     }
   }
 
@@ -987,8 +991,10 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                     </div>
                   )
                 })()}
-                {parsedAds.map((row, i) => (
-                  <div key={i} style={{ background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: 10, marginBottom: 8, opacity: row.include ? 1 : 0.5 }}>
+                {parsedAds.map((row, i) => {
+                  const hasNoPrice = !row.regular_price && !row.card_price && !row.mix_match_price
+                  return (
+                  <div key={i} style={{ background: T.card, border: '1px solid ' + (hasNoPrice ? T.gold : T.border), borderRadius: 8, padding: 10, marginBottom: 8, opacity: row.include ? 1 : 0.5 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <input type="checkbox" checked={row.include} onChange={e => updateParsedAd(i, 'include', e.target.checked)} style={{ accentColor: T.teal }} />
                       <input value={row.item_name} onChange={e => updateParsedAd(i, 'item_name', e.target.value)}
@@ -1001,8 +1007,16 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                           style={{ flex: 1, background: T.surface, border: '1px solid ' + T.border, borderRadius: 6, padding: '6px 8px', color: T.text, fontSize: px(12) }} />
                       ))}
                     </div>
+                    {(hasNoPrice || row.notes) && (
+                      <div style={{ marginLeft: 26, marginTop: 6 }}>
+                        <input value={row.notes} onChange={e => updateParsedAd(i, 'notes', e.target.value)}
+                          placeholder="Notes (e.g. Buy 1 Get 1 Free, 50% OFF w/coupon)"
+                          style={{ width: '100%', background: T.surface, border: '1px solid ' + (hasNoPrice ? T.gold : T.border), borderRadius: 6, padding: '6px 8px', color: T.text, fontSize: px(12) }} />
+                      </div>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
                 <button onClick={submitParsedAds} disabled={bulkSubmitting}
                   style={{ width: '100%', padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: bulkSubmitting ? 0.7 : 1, marginTop: 8 }}>
                   {bulkSubmitting ? 'Adding...' : `Add All Selected (${parsedAds.filter(r => r.include).length})`}
