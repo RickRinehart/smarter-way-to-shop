@@ -380,7 +380,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       const today = new Date().toISOString().slice(0, 10)
       const { data: ads } = await supabase
         .from('partner_ads')
-        .select('item_name, regular_price, card_price, mix_match_price, unit_size, department, partner_stores(name)')
+        .select('item_name, regular_price, card_price, mix_match_price, unit_size, department, notes, partner_stores(name)')
         .in('partner_store_id', preferredStoreIds)
         .or(`sale_start.is.null,sale_start.lte.${today}`)
         .or(`sale_end.is.null,sale_end.gte.${today}`)
@@ -919,6 +919,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                         {ad.partner_stores?.name} {price != null ? `· $${price.toFixed(2)}` : ''} {ad.unit_size ? `(${ad.unit_size})` : ''}
                         {mperksEnabled && isMeijer(ad.partner_stores?.name) && price != null && <span style={{ color: T.teal }}> · ${mperksPrice(price).toFixed(2)} w/ mPerks (est.)</span>}
                       </div>
+                      {ad.notes && <div style={{ fontSize: px(11), color: T.gold, marginTop: 2 }}>🏷 {ad.notes}</div>}
                     </div>
                     <button onClick={() => addFromBrowse(ad.item_name, ad.partner_stores?.name, price)} style={{ background: T.teal, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 10px', fontSize: px(12), cursor: 'pointer' }}>+ Add</button>
                   </div>
