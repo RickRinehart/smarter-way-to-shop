@@ -192,6 +192,9 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
 
   const [view, setView] = useState('list') // 'list' | 'browse' | 'onboarding'
   const [allStores, setAllStores] = useState([])
+  const [showAddStore, setShowAddStore] = useState(false)
+  const [newStoreForm, setNewStoreForm] = useState({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
+  const [addingStore, setAddingStore] = useState(false)
   const [preferredStoreIds, setPreferredStoreIds] = useState([])
   const [mperksEnabled, setMperksEnabled] = useState(() => localStorage.getItem(SWS_KEYS.mperksEnabled) === '1')
   const [mperksInfoOpen, setMperksInfoOpen] = useState(false)
@@ -273,6 +276,33 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       await supabase.from('user_preferred_markets').insert({ user_id: user.id, partner_store_id: storeId })
       setPreferredStoreIds(prev => [...prev, storeId])
     }
+  }
+
+  async function handleAddStore() {
+    if (!newStoreForm.name.trim() || addingStore) return
+    setAddingStore(true)
+    try {
+      const { data, error } = await supabase.from('partner_stores').insert({
+        name: newStoreForm.name.trim(),
+        chain: newStoreForm.chain.trim() || null,
+        address: newStoreForm.address.trim() || null,
+        inventory_model: newStoreForm.inventory_model,
+        notes: newStoreForm.notes.trim() || null,
+      }).select('id,name').single()
+      if (error) throw error
+      await loadStores()
+      // Auto-select the new store as preferred so it's immediately usable -- an admin adding a
+      // store almost always wants it active right away, not buried in an unchecked list.
+      if (data?.id && user?.id) {
+        await supabase.from('user_preferred_markets').insert({ user_id: user.id, partner_store_id: data.id })
+        setPreferredStoreIds(prev => [...prev, data.id])
+      }
+      setNewStoreForm({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
+      setShowAddStore(false)
+    } catch (e) {
+      alert('Could not add store: ' + (e.message || 'unknown error'))
+    }
+    setAddingStore(false)
   }
 
   function addItem() {
@@ -679,6 +709,34 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
               <span style={{ color: T.text, fontSize: px(14) }}>{s.name}</span>
             </label>
           ))}
+          {isAdmin && (
+            <div style={{ marginTop: 20, marginBottom: 8 }}>
+              <button onClick={() => setShowAddStore(o => !o)} style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px dashed ' + T.gold, borderRadius: 10, color: T.gold, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
+                {showAddStore ? '− Cancel' : '+ Add New Store'}
+              </button>
+              {showAddStore && (
+                <div style={{ marginTop: 10, padding: 14, background: T.card, border: '1px solid ' + T.border, borderRadius: 10 }}>
+                  <input placeholder="Store name (e.g. Harding's Friendly Market (Wayland))" value={newStoreForm.name} onChange={e => setNewStoreForm(f => ({ ...f, name: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <input placeholder="Chain (optional, e.g. Harding's Friendly Markets)" value={newStoreForm.chain} onChange={e => setNewStoreForm(f => ({ ...f, chain: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <input placeholder="Address (optional)" value={newStoreForm.address} onChange={e => setNewStoreForm(f => ({ ...f, address: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <select value={newStoreForm.inventory_model} onChange={e => setNewStoreForm(f => ({ ...f, inventory_model: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }}>
+                    <option value="recurring">Recurring stock (typical grocery store)</option>
+                    <option value="closeout_limited">Closeout / limited quantities (e.g. discount outlet)</option>
+                  </select>
+                  <input placeholder="Notes (optional, e.g. why it was added)" value={newStoreForm.notes} onChange={e => setNewStoreForm(f => ({ ...f, notes: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 10, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <button onClick={handleAddStore} disabled={!newStoreForm.name.trim() || addingStore}
+                    style={{ width: '100%', padding: '10px', background: T.gold, border: 'none', borderRadius: 8, color: '#1a1a2e', fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer', opacity: (!newStoreForm.name.trim() || addingStore) ? 0.5 : 1 }}>
+                    {addingStore ? 'Adding...' : 'Add Store'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <button onClick={() => setView('list')} disabled={preferredStoreIds.length === 0}
             style={{ width: '100%', marginTop: 16, padding: '12px', background: T.teal, color: '#fff', border: 'none', borderRadius: 10, fontFamily: FB, fontWeight: 700, fontSize: px(14), cursor: 'pointer', opacity: preferredStoreIds.length === 0 ? 0.5 : 1 }}>
             Continue
