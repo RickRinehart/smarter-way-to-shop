@@ -244,6 +244,13 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     setGeocoding(false)
   }
   const [showAddStore, setShowAddStore] = useState(false)
+  const [showPlacesSearch, setShowPlacesSearch] = useState(false)
+  const [placesQuery, setPlacesQuery] = useState('')
+  const [placesResults, setPlacesResults] = useState(null)
+  const [placesSearching, setPlacesSearching] = useState(false)
+  const [placesError, setPlacesError] = useState('')
+  const [addingPlaceId, setAddingPlaceId] = useState(null)
+  const [justAddedStore, setJustAddedStore] = useState(null) // { id, name } -- drives the "upload their ad now?" prompt
   const [newStoreForm, setNewStoreForm] = useState({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
   const [addingStore, setAddingStore] = useState(false)
   const [preferredStoreIds, setPreferredStoreIds] = useState([])
@@ -329,6 +336,20 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     }
   }
 
+  // Lightweight "City, ST" extraction from a formatted address -- not enforced anywhere yet, just
+  // recorded so a future territory/permissions system (once there are enough merchant-partners
+  // that "please only touch your own area" stops being a safe assumption) doesn't need a separate
+  // backfill pass across every store added before it existed.
+  function extractRegion(address) {
+    if (!address) return null
+    const parts = address.split(',').map(p => p.trim())
+    if (parts.length < 2) return null
+    const city = parts[parts.length - 2]
+    const stateZip = parts[parts.length - 1]
+    const state = (stateZip.match(/[A-Z]{2}/) || [])[0]
+    return state ? `${city}, ${state}` : city
+  }
+
   async function handleAddStore() {
     if (!newStoreForm.name.trim() || addingStore) return
     setAddingStore(true)
@@ -353,6 +374,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
         notes: newStoreForm.notes.trim() || null,
         latitude: lat,
         longitude: lng,
+        region: extractRegion(newStoreForm.address.trim()),
       }).select('id,name').single()
       if (error) throw error
       await loadStores()
@@ -367,10 +389,74 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       }
       setNewStoreForm({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
       setShowAddStore(false)
+      setJustAddedStore(data)
     } catch (e) {
       alert('Could not add store: ' + (e.message || 'unknown error'))
     }
     setAddingStore(false)
+  }
+
+  // Duplicate check before offering "+ Add" on a search result -- without this, searching near
+  // Grand Rapids and finding "Meijer" would let someone create a second Meijer record even though
+  // "Meijer - Plainfield region (GRR)" already exists, which would fragment ad data across two
+  // rows instead of one. Flags a likely duplicate if an existing store has an overlapping name
+  // AND is within a mile -- close enough that it's almost certainly the same physical store.
+  function findLikelyDuplicate(place) {
+    if (place.latitude == null || place.longitude == null) return null
+    const placeWords = place.name.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+    return allStores.find(s => {
+      if (s.latitude == null || s.longitude == null) return false
+      const dist = milesBetween(place.latitude, place.longitude, s.latitude, s.longitude)
+      if (dist > 1) return false
+      const sName = s.name.toLowerCase()
+      return placeWords.some(w => sName.includes(w))
+    }) || null
+  }
+
+  async function handleSearchPlaces() {
+    if (userLat == null || userLng == null) { setPlacesError('Set your location above first (Use My Location or enter an address).'); return }
+    setPlacesSearching(true)
+    setPlacesError('')
+    setPlacesResults(null)
+    try {
+      const res = await fetch('/api/places-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: userLat, lng: userLng, radiusMiles, query: placesQuery }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Search failed')
+      setPlacesResults(data.places || [])
+    } catch (e) {
+      setPlacesError(e.message || 'Could not search right now.')
+    }
+    setPlacesSearching(false)
+  }
+
+  async function handleAddStoreFromSearch(place) {
+    setAddingPlaceId(place.placeId)
+    try {
+      const { data, error } = await supabase.from('partner_stores').insert({
+        name: place.name,
+        address: place.address || null,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        inventory_model: 'recurring',
+        region: extractRegion(place.address),
+        notes: 'Added via store search',
+      }).select('id,name').single()
+      if (error) throw error
+      await loadStores()
+      if (data?.id && user?.id) {
+        await supabase.from('user_preferred_markets').insert({ user_id: user.id, partner_store_id: data.id })
+        setPreferredStoreIds(prev => [...prev, data.id])
+      }
+      setPlacesResults(prev => prev ? prev.filter(p => p.placeId !== place.placeId) : prev)
+      setJustAddedStore(data)
+    } catch (e) {
+      alert('Could not add store: ' + (e.message || 'unknown error'))
+    }
+    setAddingPlaceId(null)
   }
 
   function addItem() {
@@ -834,8 +920,45 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
           ))}
           {isAdmin && (
             <div style={{ marginTop: 20, marginBottom: 8 }}>
+              <button onClick={() => setShowPlacesSearch(o => !o)} style={{ width: '100%', padding: '10px', marginBottom: 8, background: 'transparent', border: '1px dashed ' + T.teal, borderRadius: 10, color: T.teal, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
+                {showPlacesSearch ? '− Cancel Search' : '🔍 Search for Stores Near This Location'}
+              </button>
+              {showPlacesSearch && (
+                <div style={{ marginBottom: 10, padding: 14, background: T.card, border: '1px solid ' + T.border, borderRadius: 10 }}>
+                  {!hasLocation && <div style={{ fontFamily: FM, fontSize: px(12), color: T.gold, marginBottom: 8 }}>Set a location above first (Use My Location or enter an address) — search looks within that radius.</div>}
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                    <input value={placesQuery} onChange={e => setPlacesQuery(e.target.value)} placeholder="Store name (optional -- e.g. Gene's Family Market)"
+                      style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                    <button onClick={handleSearchPlaces} disabled={placesSearching || !hasLocation}
+                      style={{ padding: '10px 16px', background: T.teal, border: 'none', borderRadius: 8, color: '#fff', fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer', opacity: (placesSearching || !hasLocation) ? 0.5 : 1 }}>
+                      {placesSearching ? '...' : 'Search'}
+                    </button>
+                  </div>
+                  <div style={{ fontFamily: FM, fontSize: px(11), color: T.muted, marginBottom: 8 }}>Leave the name blank to browse all grocery/market-type places within {radiusMiles} mi.</div>
+                  {placesError && <div style={{ fontFamily: FM, fontSize: px(12), color: '#dc2626', marginBottom: 8 }}>{placesError}</div>}
+                  {placesResults && placesResults.length === 0 && <div style={{ fontFamily: FM, fontSize: px(12), color: T.muted }}>No places found in that radius.</div>}
+                  {placesResults && placesResults.map(place => {
+                    const dupe = findLikelyDuplicate(place)
+                    const dist = (hasLocation && place.latitude != null) ? milesBetween(userLat, userLng, place.latitude, place.longitude) : null
+                    return (
+                      <div key={place.placeId} style={{ padding: '10px 0', borderTop: '1px solid ' + T.border }}>
+                        <div style={{ color: T.text, fontSize: px(14), fontWeight: 600 }}>{place.name}</div>
+                        <div style={{ color: T.muted, fontSize: px(12), fontFamily: FM }}>{place.address}{dist != null ? ` · ${dist.toFixed(1)} mi` : ''}</div>
+                        {dupe ? (
+                          <div style={{ fontFamily: FM, fontSize: px(12), color: T.gold, marginTop: 4 }}>Already in database as "{dupe.name}"</div>
+                        ) : (
+                          <button onClick={() => handleAddStoreFromSearch(place)} disabled={addingPlaceId === place.placeId}
+                            style={{ marginTop: 6, padding: '6px 14px', background: T.gold, border: 'none', borderRadius: 8, color: '#1a1a2e', fontFamily: FB, fontWeight: 700, fontSize: px(12), cursor: 'pointer', opacity: addingPlaceId === place.placeId ? 0.5 : 1 }}>
+                            {addingPlaceId === place.placeId ? 'Adding...' : '+ Add This Store'}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               <button onClick={() => setShowAddStore(o => !o)} style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px dashed ' + T.gold, borderRadius: 10, color: T.gold, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
-                {showAddStore ? '− Cancel' : '+ Add New Store'}
+                {showAddStore ? '− Cancel' : '+ Add New Store Manually'}
               </button>
               {showAddStore && (
                 <div style={{ marginTop: 10, padding: 14, background: T.card, border: '1px solid ' + T.border, borderRadius: 10 }}>
@@ -858,6 +981,21 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          {justAddedStore && (
+            <div style={{ marginBottom: 16, padding: 14, background: T.card, border: '1px solid ' + T.teal, borderRadius: 10 }}>
+              <div style={{ color: T.text, fontSize: px(14), marginBottom: 10 }}>✓ Added <strong>{justAddedStore.name}</strong>. Want to upload their current ad now, while it's on your mind?</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setJustAddedStore(null); setView('adupload'); setAdForm(f => ({ ...f, partner_store_id: justAddedStore.id })) }}
+                  style={{ flex: 1, padding: '8px', background: T.teal, border: 'none', borderRadius: 8, color: '#fff', fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer' }}>
+                  Yes, Upload Their Ad
+                </button>
+                <button onClick={() => setJustAddedStore(null)}
+                  style={{ flex: 1, padding: '8px', background: 'transparent', border: '1px solid ' + T.border, borderRadius: 8, color: T.muted, fontFamily: FB, fontSize: px(13), cursor: 'pointer' }}>
+                  Not Now
+                </button>
+              </div>
             </div>
           )}
           <button onClick={() => setView('list')} disabled={preferredStoreIds.length === 0}
