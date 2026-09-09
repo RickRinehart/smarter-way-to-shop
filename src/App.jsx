@@ -671,25 +671,47 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
     }
   }
 
-  async function scanFlyer(file) {
+  async function scanFlyer(files) {
     if (!flyerStoreId) {
       setBulkMessage('Pick a store before scanning a flyer.')
       return
     }
+    // Mixing a PDF with photos in one selection isn't supported -- a PDF already represents a
+    // whole multi-page circular on its own, so treating it as "one more page" alongside separate
+    // photos would confuse page-numbering in the progress messages for no real benefit. If a PDF
+    // is present, use only the first one and ignore anything else selected alongside it.
+    const pdfFile = files.find(f => f.type === 'application/pdf')
+    const imageFiles = files.filter(f => f.type !== 'application/pdf')
+
     setFlyerScanning(true)
     setBulkMessage('')
     setFlyerProgress('')
     try {
-      const isPdf = file.type === 'application/pdf'
+      if (pdfFile) {
+        if (files.length > 1) setBulkMessage("Only the PDF was scanned -- mixing a PDF with photos in one selection isn't supported.")
+        await scanFlyerPdf(pdfFile)
+        return
+      }
 
-      if (!isPdf) {
-        // Single image: unchanged, one request, no page-splitting needed.
+      const maxImages = 40
+      if (imageFiles.length > maxImages) {
+        throw new Error(`${imageFiles.length} photos selected -- please select ${maxImages} or fewer at a time.`)
+      }
+
+      setFlyerProgress(imageFiles.length > 1 ? `Compressing ${imageFiles.length} photos...` : 'Reading the flyer...')
+      const compressed = []
+      for (let i = 0; i < imageFiles.length; i++) {
+        if (imageFiles.length > 1) setFlyerProgress(`Compressing photo ${i + 1} of ${imageFiles.length}...`)
+        compressed.push(await compressImageToLimit(imageFiles[i]))
+      }
+
+      if (compressed.length === 1) {
+        // Single image: unchanged, one request, no batching needed.
         setFlyerProgress('Reading the flyer...')
-        const b64 = await compressImageToLimit(file)
         const raw = await callClaude({
           system: FLYER_SYSTEM_PROMPT,
           prompt: "Extract every advertised item from this flyer.",
-          imageBase64: b64,
+          imageBase64: compressed[0],
           imageType: "image/jpeg",
           maxTokens: 32000,
           timeoutMs: 180000,
@@ -700,6 +722,69 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         return
       }
 
+      // Multiple images (e.g. several screenshots of a web-based weekly ad): reuse the same
+      // batch/retry machinery built for PDF pages below, just fed from compressed photos instead
+      // of pdf.js-rendered pages.
+      const { allItems, anyBatchFailed } = await scanImageBatches(compressed, 'photo')
+      if (allItems.length === 0) throw new Error("Could not read any of the photos")
+      setParsedAds(allItems.map(toParsedAdRow))
+      setBulkMessage(
+        anyBatchFailed
+          ? `Got ${allItems.length} items from ${compressed.length} photos, but some couldn't be read and were skipped — review carefully.`
+          : `Read ${allItems.length} items from ${compressed.length} photos.`
+      )
+    } catch (err) {
+      setBulkMessage("Couldn't read that flyer: " + err.message + " — you can add items manually instead.")
+    } finally {
+      setFlyerScanning(false)
+      setFlyerProgress('')
+    }
+  }
+
+  // Shared batching loop: sends a set of already-base64 images to Claude a few at a time,
+  // retrying transient failures, and reporting progress -- used by both the PDF path (pages
+  // rendered from the PDF) and the multi-photo path (compressed screenshots/photos).
+  async function scanImageBatches(images, unitLabel) {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    async function callClaudeWithRetry(args, label, retries = 2, delayMs = 1500) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await callClaude(args)
+        } catch (err) {
+          if (attempt >= retries) throw err
+          setFlyerProgress(`${label} — connection hiccup, retrying (attempt ${attempt + 2} of ${retries + 1})...`)
+          await sleep(delayMs * (attempt + 1))
+        }
+      }
+    }
+
+    const BATCH_SIZE = 3
+    const allItems = []
+    let anyBatchFailed = false
+    for (let i = 0; i < images.length; i += BATCH_SIZE) {
+      const batch = images.slice(i, i + BATCH_SIZE)
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1
+      const totalBatches = Math.ceil(images.length / BATCH_SIZE)
+      const label = `Reading ${unitLabel}s ${i + 1}-${Math.min(i + BATCH_SIZE, images.length)} of ${images.length} (batch ${batchNum} of ${totalBatches})`
+      setFlyerProgress(`${label}...`)
+      try {
+        const raw = await callClaudeWithRetry({
+          system: FLYER_SYSTEM_PROMPT,
+          prompt: `Extract every advertised item from these flyer ${unitLabel}s.`,
+          images: batch,
+          maxTokens: 16000,
+          timeoutMs: 120000,
+        }, label)
+        allItems.push(...parseFlyerItems(raw))
+      } catch (batchErr) {
+        anyBatchFailed = true
+      }
+    }
+    return { allItems, anyBatchFailed }
+  }
+
+  async function scanFlyerPdf(file) {
+    try {
       // PDF: split into per-page images client-side, then process a few
       // pages at a time. This keeps each individual request small and fast
       // (avoiding the size/token/timeout limits a whole 20-40 page circular
@@ -713,47 +798,7 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
       setFlyerProgress('Opening the PDF...')
       const { pages, truncatedPageCount } = await splitPdfIntoPageImages(file, setFlyerProgress)
 
-      const sleep = ms => new Promise(r => setTimeout(r, ms))
-      async function callClaudeWithRetry(args, label, retries = 2, delayMs = 1500) {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            return await callClaude(args)
-          } catch (err) {
-            if (attempt >= retries) throw err
-            // Transient network blips (dropped connection, SSL handshake
-            // hiccup, etc.) are common over a long multi-batch scan -- a
-            // short retry usually succeeds on the next attempt rather than
-            // losing that batch's items entirely.
-            setFlyerProgress(`${label} — connection hiccup, retrying (attempt ${attempt + 2} of ${retries + 1})...`)
-            await sleep(delayMs * (attempt + 1))
-          }
-        }
-      }
-
-      const BATCH_SIZE = 3
-      const allItems = []
-      let anyBatchFailed = false
-      for (let i = 0; i < pages.length; i += BATCH_SIZE) {
-        const batch = pages.slice(i, i + BATCH_SIZE)
-        const batchNum = Math.floor(i / BATCH_SIZE) + 1
-        const totalBatches = Math.ceil(pages.length / BATCH_SIZE)
-        const label = `Reading pages ${i + 1}-${Math.min(i + BATCH_SIZE, pages.length)} of ${pages.length} (batch ${batchNum} of ${totalBatches})`
-        setFlyerProgress(`${label}...`)
-        try {
-          const raw = await callClaudeWithRetry({
-            system: FLYER_SYSTEM_PROMPT,
-            prompt: "Extract every advertised item from these flyer pages.",
-            images: batch,
-            maxTokens: 16000,
-            timeoutMs: 120000,
-          }, label)
-          allItems.push(...parseFlyerItems(raw))
-        } catch (batchErr) {
-          anyBatchFailed = true
-          // Keep going -- one failed batch shouldn't lose everything already
-          // read from the other pages.
-        }
-      }
+      const { allItems, anyBatchFailed } = await scanImageBatches(pages, 'page')
 
       if (allItems.length === 0) throw new Error("Could not read any pages of this flyer")
       setParsedAds(allItems.map(toParsedAdRow))
@@ -769,8 +814,6 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
     } catch (err) {
       setBulkMessage("Couldn't read that flyer: " + err.message + " — you can add items manually instead.")
     }
-    setFlyerScanning(false)
-    setFlyerProgress('')
   }
 
   function updateParsedAd(i, field, value) {
@@ -1231,10 +1274,10 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
             </div>
 
             <label style={{ display: 'block', marginBottom: 16 }}>
-              <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
-                onChange={e => e.target.files?.[0] && scanFlyer(e.target.files[0])} />
+              <input type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }}
+                onChange={e => e.target.files?.length && scanFlyer(Array.from(e.target.files))} />
               <div style={{ padding: '14px', textAlign: 'center', border: '1px dashed ' + T.border, borderRadius: 8, color: T.muted, fontSize: px(13), cursor: 'pointer' }}>
-                {flyerScanning ? `⏳ ${flyerProgress || 'Reading the flyer...'}` : '📄 Upload a flyer photo or PDF'}
+                {flyerScanning ? `⏳ ${flyerProgress || 'Reading the flyer...'}` : '📄 Upload flyer photo(s) or a PDF'}
               </div>
             </label>
 
