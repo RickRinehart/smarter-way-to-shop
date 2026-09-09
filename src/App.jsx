@@ -251,7 +251,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [placesError, setPlacesError] = useState('')
   const [addingPlaceId, setAddingPlaceId] = useState(null)
   const [justAddedStore, setJustAddedStore] = useState(null) // { id, name } -- drives the "upload their ad now?" prompt
-  const [newStoreForm, setNewStoreForm] = useState({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
+  const [newStoreForm, setNewStoreForm] = useState({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '', website: '' })
   const [addingStore, setAddingStore] = useState(false)
   const [preferredStoreIds, setPreferredStoreIds] = useState([])
   const [mperksEnabled, setMperksEnabled] = useState(() => localStorage.getItem(SWS_KEYS.mperksEnabled) === '1')
@@ -314,7 +314,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   }, [shoppingList, user?.id])
 
   const loadStores = useCallback(async () => {
-    const { data: stores } = await supabase.from('partner_stores').select('id,name,latitude,longitude').order('name')
+    const { data: stores } = await supabase.from('partner_stores').select('id,name,latitude,longitude,website').order('name')
     if (stores) setAllStores(stores)
     if (user?.id) {
       const { data: prefs } = await supabase.from('user_preferred_markets').select('partner_store_id').eq('user_id', user.id)
@@ -375,7 +375,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
         latitude: lat,
         longitude: lng,
         region: extractRegion(newStoreForm.address.trim()),
-      }).select('id,name').single()
+        website: newStoreForm.website.trim() || null,
+      }).select('id,name,website').single()
       if (error) throw error
       await loadStores()
       // Auto-select the new store as preferred so it's immediately usable -- an admin adding a
@@ -387,7 +388,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       if (newStoreForm.address.trim() && lat == null) {
         alert(`${data.name} was added, but the address couldn't be geocoded -- distance filtering won't work for it until coordinates are added.`)
       }
-      setNewStoreForm({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '' })
+      setNewStoreForm({ name: '', chain: '', address: '', inventory_model: 'recurring', notes: '', website: '' })
       setShowAddStore(false)
       setJustAddedStore(data)
     } catch (e) {
@@ -444,7 +445,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
         inventory_model: 'recurring',
         region: extractRegion(place.address),
         notes: 'Added via store search',
-      }).select('id,name').single()
+        website: place.website || null,
+      }).select('id,name,website').single()
       if (error) throw error
       await loadStores()
       if (data?.id && user?.id) {
@@ -914,7 +916,14 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
           {visibleStores.map(s => (
             <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: T.card, border: '1px solid ' + T.border, borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={preferredStoreIds.includes(s.id)} onChange={() => toggleStore(s.id)} style={{ width: 18, height: 18, accentColor: T.teal }} />
-              <span style={{ color: T.text, fontSize: px(14), flex: 1 }}>{s.name}</span>
+              {s.website ? (
+                <a href={s.website} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                  style={{ color: T.teal, fontSize: px(14), flex: 1, textDecoration: 'underline' }}>
+                  {s.name} ↗
+                </a>
+              ) : (
+                <span style={{ color: T.text, fontSize: px(14), flex: 1 }}>{s.name}</span>
+              )}
               {s.distance != null && <span style={{ color: T.teal, fontSize: px(12), fontFamily: FM }}>{s.distance.toFixed(1)} mi</span>}
             </label>
           ))}
@@ -942,7 +951,14 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                     const dist = (hasLocation && place.latitude != null) ? milesBetween(userLat, userLng, place.latitude, place.longitude) : null
                     return (
                       <div key={place.placeId} style={{ padding: '10px 0', borderTop: '1px solid ' + T.border }}>
-                        <div style={{ color: T.text, fontSize: px(14), fontWeight: 600 }}>{place.name}</div>
+                        {place.website ? (
+                          <a href={place.website} target="_blank" rel="noopener noreferrer"
+                            style={{ color: T.teal, fontSize: px(14), fontWeight: 600, textDecoration: 'underline' }}>
+                            {place.name} ↗
+                          </a>
+                        ) : (
+                          <div style={{ color: T.text, fontSize: px(14), fontWeight: 600 }}>{place.name}</div>
+                        )}
                         <div style={{ color: T.muted, fontSize: px(12), fontFamily: FM }}>{place.address}{dist != null ? ` · ${dist.toFixed(1)} mi` : ''}</div>
                         {dupe ? (
                           <div style={{ fontFamily: FM, fontSize: px(12), color: T.gold, marginTop: 4 }}>Already in database as "{dupe.name}"</div>
@@ -967,6 +983,8 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                   <input placeholder="Chain (optional, e.g. Harding's Friendly Markets)" value={newStoreForm.chain} onChange={e => setNewStoreForm(f => ({ ...f, chain: e.target.value }))}
                     style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
                   <input placeholder="Address (optional)" value={newStoreForm.address} onChange={e => setNewStoreForm(f => ({ ...f, address: e.target.value }))}
+                    style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
+                  <input placeholder="Website (optional, for finding their weekly ad)" value={newStoreForm.website} onChange={e => setNewStoreForm(f => ({ ...f, website: e.target.value }))}
                     style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }} />
                   <select value={newStoreForm.inventory_model} onChange={e => setNewStoreForm(f => ({ ...f, inventory_model: e.target.value }))}
                     style={{ width: '100%', padding: '10px', marginBottom: 8, borderRadius: 8, border: '1px solid ' + T.border, background: T.bg, color: T.text, fontFamily: FB, fontSize: px(13) }}>
