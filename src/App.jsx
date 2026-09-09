@@ -185,6 +185,25 @@ async function splitPdfIntoPageImages(file, onProgress) {
   return { pages, truncatedPageCount: pdf.numPages > maxPages ? pdf.numPages : null }
 }
 
+// Shared free-tier geocoder for the app's address/ZIP lookups. Nominatim (OpenStreetMap) is used
+// instead of the Census Bureau geocoder because the Census API sends no CORS headers at all --
+// browser fetch() calls to it are silently blocked regardless of what's typed, which meant every
+// typed address/ZIP lookup was failing with a generic "could not look up" error, full addresses
+// included, not just ZIPs. Nominatim handles both full street addresses and bare ZIP codes, needs
+// no API key, and does return `access-control-allow-origin: *`, so it actually works from a
+// browser. Nominatim's usage policy asks for a Referer or User-Agent identifying the calling app;
+// browsers can't set a custom User-Agent via fetch, but they send Referer automatically, which
+// satisfies their policy for this kind of occasional, low-volume, non-bulk lookup. Don't call this
+// in a tight loop -- their public instance is rate-limited to roughly 1 request/second.
+async function geocodeFreeform(query) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(query)}`
+  const res = await fetch(url)
+  const data = await res.json()
+  const match = data?.[0]
+  if (!match) return null
+  return { lat: parseFloat(match.lat), lng: parseFloat(match.lon) }
+}
+
 export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabel, onUpgrade, onAuthAction, theme, setTheme, largeText, setLargeText }) {
   const T = THEMES[theme]
   const scale = largeText ? 1.3 : 1
@@ -231,13 +250,10 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     setGeocoding(true)
     setLocationError('')
     try {
-      const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(addressInput.trim())}&benchmark=Public_AR_Current&format=json`
-      const res = await fetch(url)
-      const data = await res.json()
-      const match = data?.result?.addressMatches?.[0]
+      const match = await geocodeFreeform(addressInput.trim())
       if (!match) { setLocationError('Could not find that address -- try including city and state.'); setGeocoding(false); return }
-      setUserLat(match.coordinates.y)
-      setUserLng(match.coordinates.x)
+      setUserLat(match.lat)
+      setUserLng(match.lng)
     } catch (e) {
       setLocationError('Could not look up that address right now.')
     }
@@ -359,11 +375,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
       let lat = null, lng = null
       if (newStoreForm.address.trim()) {
         try {
-          const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(newStoreForm.address.trim())}&benchmark=Public_AR_Current&format=json`
-          const res = await fetch(url)
-          const geoData = await res.json()
-          const match = geoData?.result?.addressMatches?.[0]
-          if (match) { lat = match.coordinates.y; lng = match.coordinates.x }
+          const match = await geocodeFreeform(newStoreForm.address.trim())
+          if (match) { lat = match.lat; lng = match.lng }
         } catch (e) { /* geocoding failure shouldn't block adding the store -- just leave coords null */ }
       }
       const { data, error } = await supabase.from('partner_stores').insert({
