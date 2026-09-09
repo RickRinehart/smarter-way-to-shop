@@ -26,10 +26,13 @@ const GROCERY_TYPES = [
   'grocery_store',
   'supermarket',
   'butcher_shop',
-  'farmer_stall',
   'liquor_store',
   'convenience_store',
 ]
+// Note: 'farmer_stall' is a Table B type in Places API (New) -- it can appear in a response's
+// `types` array but is rejected outright as a filter value in includedTypes/excludedTypes. If
+// farmers-market coverage is wanted later, the closest Table A filter type is 'market' (unverified
+// as of this writing -- check the current Table A list before adding it back).
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
