@@ -11,8 +11,13 @@
 //   - no query        -> Nearby Search (New): general "what grocery stores are around here"
 //     browsing, filtered to grocery-relevant place types.
 //
-// Field mask is kept intentionally minimal (only what the UI actually shows) since Places API
-// (New) pricing scales with which fields are requested, not just call volume.
+// Field mask is otherwise kept minimal (only what the UI actually shows) since Places API (New)
+// pricing scales with which fields are requested, not just call volume. websiteUri is the one
+// deliberate exception: it bumps the whole call from Pro to Enterprise SKU pricing (there's no
+// per-field billing -- one Enterprise field means the entire request bills at that tier), but a
+// direct link to a store's own site is what actually lowers the friction for a partner trying to
+// find and upload that store's current ad, which is the whole point of this feature. At Rick's
+// admin-only usage volume this stays inside Google's free monthly allotment either way.
 
 const FIELD_MASK = [
   'places.id',
@@ -20,6 +25,7 @@ const FIELD_MASK = [
   'places.formattedAddress',
   'places.location',
   'places.types',
+  'places.websiteUri',
 ].join(',')
 
 const GROCERY_TYPES = [
@@ -85,6 +91,7 @@ export default async function handler(req, res) {
       latitude: p.location?.latitude ?? null,
       longitude: p.location?.longitude ?? null,
       types: p.types || [],
+      website: p.websiteUri || null,
     }))
     return res.status(200).json({ places })
   } catch (err) {
