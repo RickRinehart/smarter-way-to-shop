@@ -211,6 +211,10 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
 
   const [view, setView] = useState('list') // 'list' | 'browse' | 'onboarding'
   const [allStores, setAllStores] = useState([])
+  const [linkStoreId, setLinkStoreId] = useState('')
+  const [linkTargetId, setLinkTargetId] = useState('')
+  const [linkSaving, setLinkSaving] = useState(false)
+  const [linkMessage, setLinkMessage] = useState('')
   const [userLat, setUserLat] = useState(() => { const v = localStorage.getItem('sws_userLat'); return v ? parseFloat(v) : null })
   const [userLng, setUserLng] = useState(() => { const v = localStorage.getItem('sws_userLng'); return v ? parseFloat(v) : null })
   const [radiusMiles, setRadiusMiles] = useState(() => { const v = localStorage.getItem('sws_radiusMiles'); return v ? parseFloat(v) : 25 })
@@ -330,7 +334,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   }, [shoppingList, user?.id])
 
   const loadStores = useCallback(async () => {
-    const { data: stores } = await supabase.from('partner_stores').select('id,name,latitude,longitude,website').order('name')
+    const { data: stores } = await supabase.from('partner_stores').select('id,name,latitude,longitude,website,shares_ads_with_store_id').order('name')
     if (stores) setAllStores(stores)
     if (user?.id) {
       const { data: prefs } = await supabase.from('user_preferred_markets').select('partner_store_id').eq('user_id', user.id)
@@ -447,6 +451,24 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     setPlacesSearching(false)
   }
 
+  async function saveStoreAdLink() {
+    if (!linkStoreId) return
+    setLinkSaving(true)
+    setLinkMessage('')
+    try {
+      const { error } = await supabase
+        .from('partner_stores')
+        .update({ shares_ads_with_store_id: linkTargetId || null })
+        .eq('id', linkStoreId)
+      if (error) throw error
+      await loadStores()
+      setLinkMessage(linkTargetId ? 'Linked -- this store will now show the source store\'s ads too.' : 'Unlinked -- this store only shows its own directly-entered ads now.')
+    } catch (err) {
+      setLinkMessage('Error: ' + err.message)
+    }
+    setLinkSaving(false)
+  }
+
   async function handleAddStoreFromSearch(place) {
     setAddingPlaceId(place.placeId)
     try {
@@ -508,9 +530,9 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     try {
       const today = new Date().toISOString().slice(0, 10)
       const { data: ads } = await supabase
-        .from('partner_ads')
-        .select('item_name, regular_price, card_price, mix_match_price, unit_size, canonical_key, partner_store_id, partner_stores(name)')
-        .in('partner_store_id', preferredStoreIds)
+        .from('partner_ads_resolved')
+        .select('item_name, regular_price, card_price, mix_match_price, unit_size, canonical_key, requesting_store_id, store_name')
+        .in('requesting_store_id', preferredStoreIds)
         .or(`sale_start.is.null,sale_start.lte.${today}`)
         .or(`sale_end.is.null,sale_end.gte.${today}`)
 
@@ -522,8 +544,8 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
           if (raw == null) continue
           const normalized = normalizeAdPrice(raw, ad.unit_size)
           found.push({
-            storeId: ad.partner_store_id,
-            storeName: ad.partner_stores?.name || "Unknown",
+            storeId: ad.requesting_store_id,
+            storeName: ad.store_name || "Unknown",
             adItemName: ad.item_name,
             price: normalized ?? raw,
             needsUnitCheck: normalized == null,
@@ -548,13 +570,13 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
     try {
       const today = new Date().toISOString().slice(0, 10)
       const { data: ads } = await supabase
-        .from('partner_ads')
-        .select('item_name, regular_price, card_price, mix_match_price, unit_size, department, notes, partner_stores(name)')
-        .in('partner_store_id', preferredStoreIds)
+        .from('partner_ads_resolved')
+        .select('item_name, regular_price, card_price, mix_match_price, unit_size, department, notes, requesting_store_id, store_name')
+        .in('requesting_store_id', preferredStoreIds)
         .or(`sale_start.is.null,sale_start.lte.${today}`)
         .or(`sale_end.is.null,sale_end.gte.${today}`)
         .order('item_name')
-      setBrowseAds(ads || [])
+      setBrowseAds((ads || []).map(ad => ({ ...ad, partner_stores: { name: ad.store_name || "Unknown" } })))
     } catch { setBrowseAds([]) }
     setBrowsingLoading(false)
   }
@@ -1355,6 +1377,46 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                 </button>
               </div>
             )}
+
+            <div style={{ height: 1, background: T.border, margin: '8px 0 24px' }} />
+
+            <div style={{ fontFamily: FD, fontSize: px(18), color: T.teal, marginBottom: 4 }}>Link Stores (Shared Ads)</div>
+            <div style={{ fontSize: px(11), color: T.muted, marginBottom: 16 }}>
+              For a chain that runs the same ad across multiple locations (e.g. Meijer). Link a store to a "source" store and it automatically shows all of that store's ads — no duplicate entry needed. If this store later gets its own directly-entered item with the same canonical key, that entry overrides the inherited one for just that item.
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Store to link</label>
+              <select value={linkStoreId} onChange={e => {
+                const id = e.target.value
+                setLinkStoreId(id)
+                setLinkTargetId(allStores.find(s => s.id === id)?.shares_ads_with_store_id || '')
+                setLinkMessage('')
+              }}
+                style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }}>
+                <option value="">Select a store...</option>
+                {allStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+
+            {linkStoreId && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: px(11), color: T.muted, marginBottom: 4 }}>Shares ads with (leave blank to unlink)</label>
+                <select value={linkTargetId} onChange={e => setLinkTargetId(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }}>
+                  <option value="">— None (this store only shows its own ads) —</option>
+                  {allStores.filter(s => s.id !== linkStoreId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {linkStoreId && (
+              <button onClick={saveStoreAdLink} disabled={linkSaving}
+                style={{ padding: '10px 16px', background: T.teal, color: '#fff', border: 'none', borderRadius: 8, fontFamily: FB, fontWeight: 700, fontSize: px(13), cursor: 'pointer', opacity: linkSaving ? 0.7 : 1, marginBottom: 8 }}>
+                {linkSaving ? 'Saving...' : 'Save Link'}
+              </button>
+            )}
+            {linkMessage && <div style={{ fontSize: px(12), color: linkMessage.startsWith('Error') ? '#dc2626' : T.teal, marginBottom: 8 }}>{linkMessage}</div>}
 
             <div style={{ height: 1, background: T.border, margin: '8px 0 24px' }} />
 
