@@ -294,6 +294,7 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   const [browseAds, setBrowseAds] = useState([])
   const [browsingLoading, setBrowsingLoading] = useState(false)
   const [browseSearch, setBrowseSearch] = useState("")
+  const [browseDept, setBrowseDept] = useState("")
   const [scanning, setScanning] = useState(false)
   const [sendingToSK, setSendingToSK] = useState(false)
   const [sendToSKResult, setSendToSKResult] = useState(null)
@@ -1251,16 +1252,33 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
                   : 'Could not send — check your connection and try again'}
               </div>
             )}
-            <input value={browseSearch} onChange={e => setBrowseSearch(e.target.value)}
-              placeholder="Search deals..."
-              style={{ width: '100%', boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14), marginBottom: 12 }} />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <input value={browseSearch} onChange={e => setBrowseSearch(e.target.value)}
+                placeholder="Search deals..."
+                style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 12px', color: T.text, fontSize: px(14) }} />
+              {(() => {
+                // Built from whatever department values are actually present in the loaded ads,
+                // rather than a hardcoded list -- admins across different stores haven't
+                // necessarily used identical category names, so this always matches real data.
+                const depts = [...new Set(browseAds.map(a => a.department).filter(Boolean))].sort()
+                if (depts.length === 0) return null
+                return (
+                  <select value={browseDept} onChange={e => setBrowseDept(e.target.value)}
+                    style={{ boxSizing: 'border-box', background: T.card, border: '1px solid ' + T.border, borderRadius: 8, padding: '10px 8px', color: T.text, fontSize: px(14), maxWidth: 140 }}>
+                    <option value="">All categories</option>
+                    {depts.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                )
+              })()}
+            </div>
             {browsingLoading && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>Loading deals...</div>}
             {!browsingLoading && browseAds.length === 0 && <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No active deals found at your stores right now.</div>}
             {(() => {
               const q = browseSearch.trim().toLowerCase()
-              const filtered = q ? browseAds.filter(ad => (ad.item_name || "").toLowerCase().includes(q)) : browseAds
+              let filtered = q ? browseAds.filter(ad => (ad.item_name || "").toLowerCase().includes(q)) : browseAds
+              if (browseDept) filtered = filtered.filter(ad => ad.department === browseDept)
               if (!browsingLoading && browseAds.length > 0 && filtered.length === 0) {
-                return <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No deals match "{browseSearch}".</div>
+                return <div style={{ textAlign: 'center', color: T.muted, padding: 20 }}>No deals match{q ? ` "${browseSearch}"` : ''}{browseDept ? ` in ${browseDept}` : ''}.</div>
               }
               return filtered.map((ad, i) => {
                 const price = ad.card_price ?? ad.mix_match_price ?? ad.regular_price
