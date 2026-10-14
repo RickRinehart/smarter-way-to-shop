@@ -76,29 +76,44 @@ function normalizeAdPrice(adPrice, adUnitSize) {
 }
 
 // ── Minimal Claude call, this app's own dedicated key (never Smart Kitchen's) ──
-async function callClaude({ system, prompt, imageBase64, imageType, images, pdfBase64, maxTokens = 4000, timeoutMs = 120000 }) {
+// Every Claude call goes through our own server route (/api/ai). The server holds the API key, chooses the model, and
+// checks that the person is signed in. The key must NEVER be read in the browser (it used to be, as VITE_ANTHROPIC_KEY,
+// which put it in this site's public JavaScript; an outsider copied it and ran up a large bill).
+async function callClaude({ system, prompt, imageBase64, imageType, images, pdfBase64, maxTokens = 4000, timeoutMs = 120000, _retried = false }) {
   const content = []
   if (imageBase64) content.push({ type: "image", source: { type: "base64", media_type: imageType || "image/jpeg", data: imageBase64 } })
   if (images) for (const img of images) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: img } })
   if (pdfBase64) content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } })
   content.push({ type: "text", text: prompt })
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  let token = null
+  try { const { data } = await supabase.auth.getSession(); token = data?.session?.access_token || null } catch {}
+  const headers = { "Content-Type": "application/json" }
+  if (token) headers.Authorization = "Bearer " + token
+  const res = await fetch("/api/ai", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": import.meta.env?.VITE_ANTHROPIC_KEY || "",
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, system, messages: [{ role: "user", content }] }),
+    headers,
+    body: JSON.stringify({ system, max_tokens: maxTokens, messages: [{ role: "user", content }] }),
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!res.ok) {
     let detail = ''
-    try { const errBody = await res.json(); detail = errBody?.error?.message || JSON.stringify(errBody) } catch { detail = await res.text().catch(() => '') }
-    throw new Error("Claude API error " + res.status + (detail ? ": " + detail : ""))
+    try { const errBody = await res.json(); detail = typeof errBody?.error === 'string' ? errBody.error : (errBody?.error?.message || '') } catch {}
+    // Friendly messages for the cases a person can act on; none of these are worth retrying.
+    const friendly =
+      res.status === 413 ? "That photo or page is too large to send. Try a smaller photo, or fewer pages at a time."
+      : res.status === 429 ? "Too many scans right now. Please wait a few minutes and try again."
+      : res.status === 401 ? "Please sign in again to use scanning."
+      : res.status === 503 ? "Scanning is temporarily unavailable. Please try again in a little while."
+      : null
+    const err = new Error(friendly || ("Claude API error " + res.status + (detail ? ": " + detail : "")))
+    if (friendly) err.noRetry = true
+    throw err
   }
   const data = await res.json()
+  // If an answer is cut off at its length limit it is unreadable JSON, so ask again ONCE with a bigger allowance.
+  if (data.stop_reason === "max_tokens" && !_retried && maxTokens < 16000) {
+    return callClaude({ system, prompt, imageBase64, imageType, images, pdfBase64, maxTokens: Math.min(16000, Math.max(maxTokens * 3, 4000)), timeoutMs: Math.max(timeoutMs, 115000), _retried: true })
+  }
   return (data.content || []).map(b => b.text || "").join("")
 }
 
@@ -116,7 +131,7 @@ function fileToBase64(f) {
 // flyer routinely exceed both, causing a 413 the browser often misreports as
 // a CORS failure. Downscale + recompress via canvas until it fits, rather
 // than sending the raw file and letting the API reject it.
-function compressImageToLimit(file, maxDim = 2000, maxBase64Bytes = 4.5 * 1024 * 1024) {
+function compressImageToLimit(file, maxDim = 2000, maxBase64Bytes = 2.5 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
@@ -176,7 +191,7 @@ async function splitPdfIntoPageImages(file, onProgress) {
 
     let quality = 0.85
     let base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1]
-    while (base64.length * 0.75 > 4.5 * 1024 * 1024 && quality > 0.4) {
+    while (base64.length * 0.75 > 2.5 * 1024 * 1024 && quality > 0.4) {
       quality -= 0.1
       base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1]
     }
@@ -509,11 +524,11 @@ export default function App({ user, isActive, isSuiteMember, isAdmin, statusLabe
   async function scanListPhoto(file) {
     setScanning(true)
     try {
-      const b64 = await fileToBase64(file)
+      const b64 = await compressImageToLimit(file)
       const raw = await callClaude({
         system: "You are reading a handwritten or typed shopping list photo. Extract every item written down, even if handwriting is messy or words are misspelled — use your best judgment to identify the intended grocery item. Return ONLY a valid JSON array of strings, one per item, cleaned up and correctly spelled. Include every item you can identify.",
         prompt: "Read this shopping list photo and extract every item written on it.",
-        imageBase64: b64, imageType: file.type || "image/jpeg",
+        imageBase64: b64, imageType: "image/jpeg",
       })
       const s = raw.indexOf("["), e = raw.lastIndexOf("]")
       if (s === -1) throw new Error("Could not read the list")
@@ -787,21 +802,31 @@ Return ONLY a valid JSON array of objects with exactly these keys: item_name, re
         try {
           return await callClaude(args)
         } catch (err) {
-          if (attempt >= retries) throw err
+          if (attempt >= retries || err.noRetry) throw err
           setFlyerProgress(`${label} — connection hiccup, retrying (attempt ${attempt + 2} of ${retries + 1})...`)
           await sleep(delayMs * (attempt + 1))
         }
       }
     }
 
-    const BATCH_SIZE = 3
+    // Up to 3 pages per request, but also capped by size so one request always fits the host's ~4.5MB request
+    // limit (dense pages are bigger than sparse ones).
+    const MAX_BATCH_IMAGES = 3
+    const MAX_BATCH_CHARS = 4.0 * 1024 * 1024
+    const batches = []
+    let cur = [], curChars = 0
+    for (const img of images) {
+      if (cur.length && (cur.length >= MAX_BATCH_IMAGES || curChars + img.length > MAX_BATCH_CHARS)) { batches.push(cur); cur = []; curChars = 0 }
+      cur.push(img); curChars += img.length
+    }
+    if (cur.length) batches.push(cur)
     const allItems = []
     let anyBatchFailed = false
-    for (let i = 0; i < images.length; i += BATCH_SIZE) {
-      const batch = images.slice(i, i + BATCH_SIZE)
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1
-      const totalBatches = Math.ceil(images.length / BATCH_SIZE)
-      const label = `Reading ${unitLabel}s ${i + 1}-${Math.min(i + BATCH_SIZE, images.length)} of ${images.length} (batch ${batchNum} of ${totalBatches})`
+    let done = 0
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi]
+      const label = `Reading ${unitLabel}s ${done + 1}-${done + batch.length} of ${images.length} (batch ${bi + 1} of ${batches.length})`
+      done += batch.length
       setFlyerProgress(`${label}...`)
       try {
         const raw = await callClaudeWithRetry({
